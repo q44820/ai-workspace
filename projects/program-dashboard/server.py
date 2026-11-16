@@ -11,7 +11,22 @@ import subprocess
 import threading
 import time
 
+from urllib.parse import urlsplit
+
 HERE = Path(__file__).resolve().parent
+
+def safe_web_url(value):
+    if not isinstance(value,str) or any(ord(c)<33 or c=='\\' for c in value):
+        return None
+    try:
+        parsed=urlsplit(value)
+        if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password:
+            return None
+        _=parsed.port
+        return value
+    except ValueError:
+        return None
+
 SERVICE_MAP = {
     'basis-radar': ('user', 'basis-radar.service'),
     'arb-hub': ('system', 'arb-hub.service'),
@@ -89,7 +104,17 @@ class Inventory:
                         row.update(state='unknown',label='状态已过期',detail='本机同步超过15分钟，不能把旧状态当当前状态')
             except (OSError, ValueError, TypeError, KeyError):
                 pass
-            self.cached = {'generated_at':utcnow(),'read_only':True,'local_sync':sync,'items':items,'scope':'仅展示GitHub代码库中的项目；Alpha与Booster分别显示状态，不列未上传的旧任务、代理和系统服务。','privacy':'不展示密钥、账户、资产、持仓、日志、原始命令、机器地址或认证配置。','status_note':'运行中仅表示进程存在；定时启用不等于任务成功；停止不等于代码不存在。'}
+            try:
+                web_links=json.loads((self.runtime/'web_links.json').read_text())
+                if not isinstance(web_links,dict):web_links={}
+            except (OSError,ValueError,TypeError):
+                web_links={}
+            for row in items:
+                row.pop('web_url',None)
+                # Self-link stays relative so a new private access URL is never stale.
+                candidate='./' if row['id']=='program-dashboard' else safe_web_url(web_links.get(row['id']))
+                if candidate:row['web_url']=candidate
+            self.cached = {'generated_at':utcnow(),'read_only':True,'local_sync':sync,'items':items,'scope':'仅展示GitHub代码库中的项目；Alpha与Booster分别显示状态，不列未上传的旧任务、代理和系统服务。','privacy':'不展示密钥、账户、资产、持仓、日志、原始命令或认证配置；仅展示经确认的网页跳转入口。','status_note':'运行中仅表示进程存在；定时启用不等于任务成功；停止不等于代码不存在。'}
             self.cached_at = time.monotonic()
             return self.cached
 

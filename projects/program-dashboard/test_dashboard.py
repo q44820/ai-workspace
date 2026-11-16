@@ -107,4 +107,17 @@ class DashboardTests(unittest.TestCase):
         d=server.Inventory(self.runtime,catalog=[{'id':'lp-bncb-bnb','name':'BNCB/BNB LP区间监控'}]).snapshot()
         self.assertEqual(d['items'][0]['state'],'unknown');self.assertEqual(d['items'][0]['name'],'BNCB/BNB LP区间监控')
 
+    def test_13_web_links_only_from_private_config_and_safe_schemes(self):
+        catalog=[{'id':'basis-radar','name':'fixture','web_url':'https://not-trusted.example/'},{'id':'lp-price-range','name':'LP'},{'id':'program-dashboard','name':'看板'}]
+        (self.runtime/'web_links.json').write_text(json.dumps({'basis-radar':'https://valid.example/','lp-price-range':'javascript:alert(1)','unknown':'https://unknown.example/'}))
+        with patch.object(server,'service_status',return_value={'state':'running'}):d=server.Inventory(self.runtime,catalog=catalog).snapshot()
+        self.assertEqual(d['items'][0]['web_url'],'https://valid.example/')
+        self.assertNotIn('web_url',d['items'][1]);self.assertEqual(d['items'][2]['web_url'],'./')
+        self.assertEqual(len(d['items']),3)
+        for bad in ['javascript:alert(1)','data:text/html,hi','https://name:pass@example.com/','//example.com','https://example.com/\n','https://example.com:bad/','http://example.com\\x']:
+            self.assertIsNone(server.safe_web_url(bad))
+    def test_14_missing_web_config_keeps_names_unlinked(self):
+        d=server.Inventory(self.runtime,catalog=[{'id':'lp-price-range','name':'LP','web_url':'https://not-trusted.example/'}]).snapshot()
+        self.assertNotIn('web_url',d['items'][0])
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -3,7 +3,13 @@ let snapshot = null, includeOld = false;
 const states = {running:'运行中',scheduled:'定时启用',stopped:'已停止',error:'异常',manual:'手动／归档',unknown:'待核验'};
 function element(tag, text, className) { const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e; }
 function dateText(value) { return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '无记录'; }
-function render() {
+function programTitle(row){
+ const heading=element('h3',row.name);if(!row.web_url)return heading;
+ try{const url=new URL(row.web_url,location.href);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return heading;
+ const link=element('a',row.name+' ↗','program-link');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';link.title='打开已部署网页（新标签页）';heading.replaceChildren(link);
+ }catch{}return heading;
+}
+function render(){
  if(!snapshot)return;
  const query=$('search').value.trim().toLowerCase(), state=$('status').value, loc=$('location').value;
  const all=snapshot.items, counts={};for(const row of all)counts[row.state]=(counts[row.state]||0)+1;
@@ -18,7 +24,7 @@ function render() {
  $('groups').replaceChildren();
  for(const [name,rows] of groups){
   const section=element('section',undefined,'group');section.append(element('h2',name+' · '+rows.length));const grid=element('div',undefined,'grid');
-  for(const row of rows){const card=element('article',undefined,'card');const top=element('div',undefined,'card-top');top.append(element('h3',row.name),element('span',row.label||states[row.state]||'待核验','badge '+row.state));card.append(top,element('div',row.location+(row.schedule?' · '+row.schedule:''),'sub'),element('p',row.purpose,'purpose'),element('p',row.detail||'','detail'));
+  for(const row of rows){const card=element('article',undefined,'card');const top=element('div',undefined,'card-top');top.append(programTitle(row),element('span',row.label||states[row.state]||'待核验','badge '+row.state));card.append(top,element('div',row.location+(row.schedule?' · '+row.schedule:''),'sub'),element('p',row.purpose,'purpose'),element('p',row.detail||'','detail'));
    if(row.usage){const use=element('div',undefined,'usage');use.append(element('strong','如何使用／更新'),element('p',row.usage));card.append(use);}
    const bottom=element('div',undefined,'card-bottom');if(row.code&&row.code.startsWith('https://github.com/q44820/ai-workspace/')){const a=element('a','代码与中文说明 ↗');a.href=row.code;a.target='_blank';a.rel='noopener noreferrer';bottom.append(a);}if(row.checked_at)bottom.append(element('span','核验 '+dateText(row.checked_at)));card.append(bottom);grid.append(card);
   }section.append(grid);$('groups').append(section);
