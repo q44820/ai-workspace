@@ -1,0 +1,29 @@
+name: Offline verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install offline test dependency
+        run: python3 -m pip install 'pycryptodome>=3.20,<4'
+      - name: Offline checks
+        run: python3 scripts/verify_workspace.py
+      - name: Scan tracked content
+        run: python3 scripts/check_publication.py --all
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --check projects/basis-radar/static/app.js
+          node --check projects/lp-monitor/scripts/bncb_lp_snapshot.cjs

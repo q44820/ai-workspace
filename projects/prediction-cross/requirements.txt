@@ -1,0 +1,10 @@
+# Polymarket-Opinion 套利监控系统依赖
+
+# 浏览器自动化
+playwright>=1.40.0
+
+# 异步 HTTP 请求
+aiohttp>=3.9.0
+
+# 工具库
+python-dotenv>=1.0.0

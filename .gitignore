@@ -1,0 +1,34 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*
+*secret*
+# Runtime and private business data
+*.db
+*.sqlite*
+*.log
+private/
+data/
+logs/
+backups/
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+runtime/
+output/
+reports/
+*_state.json
+*config.local*
+wxpusher_config.json
+meme_lp_price_monitor.json
+sim_log.json
+candidates.json
+

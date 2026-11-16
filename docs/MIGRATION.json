@@ -1,0 +1,281 @@
+{
+  "scope": [
+    "01",
+    "03",
+    "07",
+    "09",
+    "10",
+    "19"
+  ],
+  "production_services_modified": false,
+  "files": [
+    {
+      "source": "projects/basis-radar/core.py",
+      "target": "projects/basis-radar/core.py",
+      "source_sha256": "85b05e1b8a53ad1b8e59cb9542643762b12ccad2e7989252d7a7297ea08d06b0",
+      "changes": [],
+      "target_sha256": "85b05e1b8a53ad1b8e59cb9542643762b12ccad2e7989252d7a7297ea08d06b0",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/exchanges.py",
+      "target": "projects/basis-radar/exchanges.py",
+      "source_sha256": "0175530a94c9b31735e4f6edf4d0e7521a278999a7b4d0dbd78ccb3046e733e5",
+      "changes": [],
+      "target_sha256": "0175530a94c9b31735e4f6edf4d0e7521a278999a7b4d0dbd78ccb3046e733e5",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/server.py",
+      "target": "projects/basis-radar/server.py",
+      "source_sha256": "da9167dc60b9aac58d1fa49fa1441c2e3527dc7929c4bf960e4cefb98cb0321a",
+      "changes": [],
+      "target_sha256": "da9167dc60b9aac58d1fa49fa1441c2e3527dc7929c4bf960e4cefb98cb0321a",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/test_core.py",
+      "target": "projects/basis-radar/test_core.py",
+      "source_sha256": "11d775ab91b55367738cd6736fef8ace24aabbc0598407cc886368ff6d05222c",
+      "changes": [],
+      "target_sha256": "11d775ab91b55367738cd6736fef8ace24aabbc0598407cc886368ff6d05222c",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/test_cross.py",
+      "target": "projects/basis-radar/test_cross.py",
+      "source_sha256": "3efce02ff0449ab187e5220f978e001ebccd618a228199c2a17a488e92407e25",
+      "changes": [],
+      "target_sha256": "3efce02ff0449ab187e5220f978e001ebccd618a228199c2a17a488e92407e25",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/static/index.html",
+      "target": "projects/basis-radar/static/index.html",
+      "source_sha256": "c28ab5a811de55dbf391c2fe8cd13e74acd4704f70dfc622bc2b3dba0b690cae",
+      "changes": [],
+      "target_sha256": "c28ab5a811de55dbf391c2fe8cd13e74acd4704f70dfc622bc2b3dba0b690cae",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/static/style.css",
+      "target": "projects/basis-radar/static/style.css",
+      "source_sha256": "95f01bd05c2a7cc5500af91372fb3306f1787aa8d9136a743c530c5cb2107e09",
+      "changes": [],
+      "target_sha256": "95f01bd05c2a7cc5500af91372fb3306f1787aa8d9136a743c530c5cb2107e09",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "projects/basis-radar/static/app.js",
+      "target": "projects/basis-radar/static/app.js",
+      "source_sha256": "1006626470ab83736ad9aa4341a7a1eb45709dfc12951c58b47d48dbaf8f6103",
+      "changes": [],
+      "target_sha256": "1006626470ab83736ad9aa4341a7a1eb45709dfc12951c58b47d48dbaf8f6103",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/bncb_lp_monitor.py",
+      "target": "projects/lp-monitor/scripts/bncb_lp_monitor.py",
+      "source_sha256": "ad9fc0943b3d7570a193cdaf6a5034db84cb184fda79b95549d151a8f12a741e",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "7e218adb1fa4c10850b342acfa89cd8a1674bccf062f9159b99f37954faae3b5",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/bncb_lp_snapshot.cjs",
+      "target": "projects/lp-monitor/scripts/bncb_lp_snapshot.cjs",
+      "source_sha256": "f405764f9a63eb57962acaf91e3b9cbda2fcb1047a00822c51090553dcacc273",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "1d1524e3d7943d7ef60b10fab9b097254dc821b57dd4439324e613ebc47b4495",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/test_bncb_lp_monitor.py",
+      "target": "projects/lp-monitor/scripts/test_bncb_lp_monitor.py",
+      "source_sha256": "8b4af76295070369fe5e63204b86afa85739ba430e76e5e8716890828c44854c",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "b86736fcf1679df2f80c0c83be10d943b6a59f3ae70846ce0237fd997b7c10a5",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/lp_address_audit.py",
+      "target": "projects/lp-monitor/scripts/lp_address_audit.py",
+      "source_sha256": "5d86b2830ee2e78173571950669b56a9d7c17f16859733e39ed0f8d62ff0e9a1",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "59dc3227f83a1e446776c32af55e14297d771b28b005407cc225166d4f9276b2",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/lp_monitor_sync.py",
+      "target": "projects/lp-monitor/scripts/lp_monitor_sync.py",
+      "source_sha256": "97ee8553d9b0c76e33ec5494bf393de7b7c65ae49389a090576874e40f89830a",
+      "changes": [],
+      "target_sha256": "97ee8553d9b0c76e33ec5494bf393de7b7c65ae49389a090576874e40f89830a",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/lp_wallet_watchdog.py",
+      "target": "projects/lp-monitor/scripts/lp_wallet_watchdog.py",
+      "source_sha256": "371af59dcdb7f883b7169d0283053fa6fecb90d72ce573ebc9b89be14936d7ad",
+      "changes": [],
+      "target_sha256": "371af59dcdb7f883b7169d0283053fa6fecb90d72ce573ebc9b89be14936d7ad",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/meme_lp_price_monitor.py",
+      "target": "projects/lp-monitor/scripts/meme_lp_price_monitor.py",
+      "source_sha256": "29cbadf6614c55e56ce2724e46c69f99ecaeb006a8bfe85757e5b01a565c5f0b",
+      "changes": [],
+      "target_sha256": "29cbadf6614c55e56ce2724e46c69f99ecaeb006a8bfe85757e5b01a565c5f0b",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/test_lp_wallet_watchdog.py",
+      "target": "projects/lp-monitor/scripts/test_lp_wallet_watchdog.py",
+      "source_sha256": "8cffbb3291214c569f83fbcdacf0a180cbaea4a85263090651704ca27dad7b0f",
+      "changes": [],
+      "target_sha256": "8cffbb3291214c569f83fbcdacf0a180cbaea4a85263090651704ca27dad7b0f",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "polymarket_toolkit/core/scanner.py",
+      "target": "projects/polymarket-research/scanner.py",
+      "source_sha256": "c5ad8f5fac794b9b3d281aa3ee9b386db3aa2566f5459b0b702f2a187df0c638",
+      "changes": [],
+      "target_sha256": "1721aaddc93f44afa9568668ab9147c34cf500b7ed1a3a248f031e69f9959f38",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "polymarket_toolkit/hunter/polymarket_monitor_v5.py",
+      "target": "projects/polymarket-research/hunter.py",
+      "source_sha256": "da5b5fb2dc26ee239779ab2a47152c6851d559e13d3fd7b0b3ada75b26bfec05",
+      "changes": [],
+      "target_sha256": "51bf45fc597ba548953d478715acfcddd3ae8821cb44dabcaee8932907221922",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "polymarket_toolkit/weather/weather_arbitrage_scanner.py",
+      "target": "projects/weather-research/weather_arbitrage_scanner.py",
+      "source_sha256": "918193738eebeb4959c0d004e9e378a9694f72a83633d880337e2abb457a9b62",
+      "changes": [],
+      "target_sha256": "16b0967b36a32895ce1326cbcf8986846622abff26feaae5e03271ff87017da6",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "polymarket_toolkit/weather/settle_and_report.py",
+      "target": "projects/weather-research/settle_and_report.py",
+      "source_sha256": "5b72a6a13d7d82fa3fa3af88a862deea208d3bbee7f5d219f2a20c49a46297ef",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "51fd7d7a2fc3388ac6a34cdaa53dbe5332e62fc6d398dd5fbc1fda616170bc9b",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/arbitrage_monitor.py",
+      "target": "projects/prediction-cross/arbitrage_monitor.py",
+      "source_sha256": "ec7761ec11d858d8f702419d3b00311fdee48044b70714e4341ecd20a98be9db",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "6a24d841c378525a9faef2e601babd8a1b1e498e54fd1920a74d4c228a82fb70",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/arbitrage_calculator.py",
+      "target": "projects/prediction-cross/arbitrage_calculator.py",
+      "source_sha256": "e2c72667c8196132da7fb2bf01f0ded949c6d7a170e36dfe804db4f60f8fbe0c",
+      "changes": [],
+      "target_sha256": "e2c72667c8196132da7fb2bf01f0ded949c6d7a170e36dfe804db4f60f8fbe0c",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/scraper.py",
+      "target": "projects/prediction-cross/scraper.py",
+      "source_sha256": "cd122e10faa6759b077679325966794f20fc459843731d122429e559a7650a5b",
+      "changes": [],
+      "target_sha256": "cd122e10faa6759b077679325966794f20fc459843731d122429e559a7650a5b",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/telegram_bot.py",
+      "target": "projects/prediction-cross/telegram_bot.py",
+      "source_sha256": "26c742e91e104e6e46de34ef29e2b10425878787f8c0c714eacfcbde7bbd0e7e",
+      "changes": [],
+      "target_sha256": "26c742e91e104e6e46de34ef29e2b10425878787f8c0c714eacfcbde7bbd0e7e",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/config.py",
+      "target": "projects/prediction-cross/config.py",
+      "source_sha256": "f84f7cbb9504d06195c4b6dff7117508ca002c134492e5ff9be024431f8da722",
+      "changes": [],
+      "target_sha256": "f84f7cbb9504d06195c4b6dff7117508ca002c134492e5ff9be024431f8da722",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/market_config.py",
+      "target": "projects/prediction-cross/market_config.py",
+      "source_sha256": "2e701159966a601df4c6c9a97f05e302903a664d264a162733ebd7aff6e63f8b",
+      "changes": [],
+      "target_sha256": "2e701159966a601df4c6c9a97f05e302903a664d264a162733ebd7aff6e63f8b",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "arbitrage_monitor/requirements.txt",
+      "target": "projects/prediction-cross/requirements.txt",
+      "source_sha256": "fd6549171df58f4478ada25ed3cc5031a383a3fcbac1f49e6a28181aa62de3cb",
+      "changes": [],
+      "target_sha256": "fd6549171df58f4478ada25ed3cc5031a383a3fcbac1f49e6a28181aa62de3cb",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/flight_search.py",
+      "target": "projects/flights/legacy/flight_search.py",
+      "source_sha256": "176f07e1299eb4ded49d43f68f70bbbff76e22a2d656e78afb6dbe861012edb2",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "56e51b4991a3ab64538e24575b18ebf14aaa4081d3158c93ef7264b1f74990e5",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/flight_search2.py",
+      "target": "projects/flights/legacy/flight_search2.py",
+      "source_sha256": "0e61128f899cd3bda17a77c76fea3b11614b6392b5bbb6e16796b0e02c01baa9",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "907e005cedfa8571bb414ae77800ca47bc6c7aaaf3366c3d00073bf893339603",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/flight_search_v2.py",
+      "target": "projects/flights/legacy/flight_search_v2.py",
+      "source_sha256": "5d7f05e89b1f3e2dd1703c70ce14968748e68b153f54a975f8bab776b1b58303",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "eb260dcfbe8fd0dd60c3c6e60309d5703668ed04ec0e4047df4ca4392c30cb38",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    },
+    {
+      "source": "scripts/query_flight_prices.py",
+      "target": "projects/flights/legacy/query_flight_prices.py",
+      "source_sha256": "115d8bd0a60064d0b0eb33c21e7ad88a9bfcb7cf87903ac155aa9ab205c08b8a",
+      "changes": [
+        "去除私有路径或钱包默认值；历史危险入口设为需人工适配；不修改原运行文件"
+      ],
+      "target_sha256": "bdbed189b31e2086ee43e1b7531cb7d3bf12342172f4b0b0d0d6b843c6522798",
+      "note": "仅整理副本；原运行文件未修改。凭据、实际状态、账户流水、历史报告未迁移。"
+    }
+  ]
+}

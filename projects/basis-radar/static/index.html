@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>价差中位数雷达 · 只读</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head><body><main>
+<header><span class="badge">公开行情 · 零交易权限</span><h1>价差中位数雷达</h1><p>不是看谁更贵，而是看当前偏离近期中枢多少。</p></header>
+<section><form id="scan"><div class="grid"><label>币种代码<input id="symbol" value="BTC" maxlength="30" required placeholder="BTC / ETH / SOL"></label><label>价差模式<select id="market"><option value="spot">现货 ↔ 现货（默认）</option><option value="perp">永续 ↔ 永续（只读研究）</option><option value="spot_perp">现货 ↔ 永续（同所／跨所）</option></select></label><label>每边参考金额（U）<input id="notional" type="number" value="1000" min="10" max="1000000"></label></div>
+<p class="small">请填准确代码，不自动把1000倍代币、股票映射资产或相似名称当成同一标的。现货 ↔ 永续模式支持同一交易所，也支持跨所；现货与永续费率分别设置。反向卖出现货需要库存或借币，资金费和强平风险需另核对。</p>
+<div class="venues" id="venues"></div>
+<details><summary>费用和判断门槛（bp）</summary><p>1 bp = 0.01%。下面是人工预设，不是已核验的账户费率。请改成你的实际费率，默认每边每次5bp；开平共4笔。挂单返佣、资金费和借币成本请单独核对。</p><div class="grid" id="fees"></div><div class="grid"><label>额外成本预留（资金费／借币／延迟，bp）<input id="reserve" type="number" value="3" min="0" max="500" step="0.1"></label><label>平仓双边点差预留（bp）<input id="exit_spread" type="number" value="3" min="0" max="500" step="0.1"></label><label>费用后最低空间门槛（bp）<input id="threshold" type="number" value="10" min="0" max="500" step="0.1"></label></div></details>
+<div class="actions"><button type="submit" id="go">一键查询</button><label class="inline"><input type="checkbox" id="auto">每30秒刷新（页面打开时）</label></div></form><p id="status" role="status">选币种和交易所，即可查询。</p></section>
+<aside>两小时中位数 ≠ 一定回归，更不等于无风险套利。历史K线只作估算；不读取账户、不下单、不撤单。查询后本地脚本会对该币种采样4小时，零大模型调用；每个UTC分钟最多一条，查询会续期。</aside>
+<section id="overview" hidden></section><section id="errors" hidden></section><div id="results"></div>
+<section><h2>口径与限制</h2><ul><li>不是分别取两所价格中位数再相减，而是对齐过去120个已收盘分钟，先计算每分钟价差，再取中位数。至少108个匹配样本且窗口够新才做情景判断，不补空值。</li><li>价差统一采用对称公式：20000 × (B−A) ÷ (A+B)，反向符号严格相反。与以A为分母的软件会有小差异。</li><li>当前可成交价差按两边相同基础币数量、指定金额的订单簿VWAP估计；包含当前盘口点差与深度冲击，不是最新成交价。未来实际成交仍会变化。</li><li>回归净空间 ≈ 当前可成交价差 − 方向对应的历史中位数 − 两所开平4笔手续费 − 额外预留 − 平仓点差预留。只表示回到旧中枢的情景，不是保证利润。</li><li>USD与USDT不假设1:1，不跨计价币混算。盘口同时请求仍非严格原子快照；慢请求、陈旧时间戳和明显错时不做判断。无原始时间戳的平台只校验接收时间。</li><li>查询触发固定每分钟一次的真实盘口中间价留存。未积累满窗口会标“采集中”，与K线估算分开显示；不是回填的历史盘口，也不是逐笔或时间加权中位数。采样记录保留24小时。</li><li>交易所同名代码不保证同标的、同合约规模和同结算规则。尤其股票、指数、映射资产需人工核验，资金费和交易时段不同可能导致价差长期不回归。</li></ul></section><footer>仅供研究，不构成开仓建议。无需登录或提供任何密钥。</footer>
+</main></body></html>
