@@ -12,9 +12,9 @@ P1为维护主线，P2为次级，**P3为最低档**。优先级仅影响工作�
 ## 所有AI的入口
 
 1. [AGENTS.md](AGENTS.md)：协作与安全边界。
-2. [docs/COLLABORATION.md](docs/COLLABORATION.md)：分支、PR、任务锁和更新顺序。
+2. [docs/COLLABORATION_AI协作流程.md](docs/COLLABORATION_AI协作流程.md)：分支、PR、任务锁和更新顺序。
 3. 每个项目的README、WORKFLOW、STATUS：目的、入口、限制和待办。
-4. [docs/VERIFICATION.md](docs/VERIFICATION.md)：本次实际验收证据，不把迁入等同在线可用。
+4. [docs/VERIFICATION_验收记录.md](docs/VERIFICATION_验收记录.md)：本次实际验收证据，不把迁入等同在线可用。
 5. [docs/MIGRATION.json](docs/MIGRATION.json)：原文件相对位置、迁移前后摘要和整理说明。
 
 其他未入选项目不在本次迁移范围，原文件照留；没有删除、重启或恢复任何旧任务。没有导入生产凭据、钱包配置、聊天、交易流水、历史模拟账或部署机器标识。

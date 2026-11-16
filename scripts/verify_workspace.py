@@ -30,7 +30,7 @@ def main():
         else:raise AssertionError('invalid flight parameters accepted')
     run([sys.executable,str(p),'--dep','PEK','--arr','SHA','--date',future],ROOT)
     for slug in ['basis-radar','lp-monitor','polymarket-research','weather-research','prediction-cross','flights']:
-        for name in ['README.md','WORKFLOW.md','STATUS.md']:assert (ROOT/'projects'/slug/name).is_file()
+        for name in ['README.md','WORKFLOW_工作流程.md','STATUS_当前状态.md']:assert (ROOT/'projects'/slug/name).is_file()
     migration=json.loads((ROOT/'docs/MIGRATION.json').read_text())
     import hashlib
     for row in migration['files']:

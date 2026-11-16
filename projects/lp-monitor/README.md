@@ -3,7 +3,7 @@
 - 优先级：**P1（维护主线）**。P1主线，P2次级，P3最低。
 - 本次状态：代码已整理；运行服务未迁移，未启停旧任务。
 - 依赖：Python 3.10+；地址审计可选pycryptodome；BSC快照Node.js 18+与ethers v6。
-- 流程与交接：[WORKFLOW.md](WORKFLOW.md)、[STATUS.md](STATUS.md)。
+- 流程与交接：[WORKFLOW_工作流程.md](WORKFLOW_工作流程.md)、[STATUS_当前状态.md](STATUS_当前状态.md)。
 
 ## 入口
 

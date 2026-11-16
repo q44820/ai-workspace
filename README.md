@@ -4,11 +4,15 @@
 
 ## 开始阅读
 
-1. [项目索引与优先级](PROJECTS.md)
+**[FILES_文件中文索引.md（所有文件的中文用途对照）](FILES_文件中文索引.md)**
+
+说明文档采用“英文_中文.md”命名。`README.md`、`AGENTS.md`及代码、依赖、自动化入口保留原名，避免影响工具识别和运行；对应中文用途均可在上方索引查看。
+
+1. [项目索引与优先级](PROJECTS_项目索引.md)
 2. [AI协作规则](AGENTS.md)
-3. [分支、PR与交接流程](docs/COLLABORATION.md)
-4. [实际验收与限制](docs/VERIFICATION.md)
-5. [安全规则](SECURITY.md)、[变更记录](CHANGELOG.md)
+3. [分支、PR与交接流程](docs/COLLABORATION_AI协作流程.md)
+4. [实际验收与限制](docs/VERIFICATION_验收记录.md)
+5. [安全规则](SECURITY_安全规则.md)、[变更记录](CHANGELOG_变更记录.md)
 
 已迁入01价差网页、03 LP监控、07 Polymarket研究、09天气研究、10跨平台监控、19机票工具的代码副本与工作流程。Polymarket相关统一P3最低优先级；不含实盘下单执行器。
 

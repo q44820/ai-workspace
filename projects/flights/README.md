@@ -3,7 +3,7 @@
 - 优先级：**P2（次优先级）**。P1主线，P2次级，P3最低。
 - 本次状态：代码已整理；运行服务未迁移，未启停旧任务。
 - 依赖：Python 3.10+；实际搜索需Playwright及Chromium。
-- 流程与交接：[WORKFLOW.md](WORKFLOW.md)、[STATUS.md](STATUS.md)。
+- 流程与交接：[WORKFLOW_工作流程.md](WORKFLOW_工作流程.md)、[STATUS_当前状态.md](STATUS_当前状态.md)。
 
 ## 入口
 
