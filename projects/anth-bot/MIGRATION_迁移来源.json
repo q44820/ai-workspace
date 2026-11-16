@@ -1,0 +1,36 @@
+{
+  "project": "anth-bot",
+  "source": "read-only production source snapshot; host identity intentionally omitted",
+  "files": [
+    {
+      "source": "bot.py",
+      "source_sha256": "6e7c61daa866ce0f5f7e28571f2518fa5826a2ce8b5f1dae3a0813d402fc4494",
+      "target": "bot.py",
+      "target_sha256": "b4bc4315a553435404aa780004006c1a5a1a8b17bc851d8b4ffe3b6330591dad"
+    },
+    {
+      "source": "simtest.py",
+      "source_sha256": "53208288eb623fdc6eb140bcb21c4e70f9c2fc6ae7f1b3a5ee3d48bff20742ef",
+      "target": "simtest.py",
+      "target_sha256": "e9e249425b52c753a2db75970f3b9147e39d5e8d88b4f4424f039c11676d9b91"
+    },
+    {
+      "source": "control.html",
+      "source_sha256": "e903a45ec67f2d92c0fa3b1d8f106e9cbf8fe77f19558a3656628242586a312a",
+      "target": "control.html",
+      "target_sha256": "dd5e7dc531303dfc51dfd836a5919fea2b0d113e7defb778c09acc039a4be3c3"
+    }
+  ],
+  "excluded": [
+    "account configuration",
+    "secrets",
+    "environment files",
+    "state",
+    "logs",
+    "databases",
+    "backups",
+    "production service definitions",
+    "historical fills and account tests"
+  ],
+  "production_modified": false
+}

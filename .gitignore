@@ -31,4 +31,15 @@ wxpusher_config.json
 meme_lp_price_monitor.json
 sim_log.json
 candidates.json
+# Additional server-project private configurations and state
+state.json
+manual.json
+config.json
+account.json
+accounts.json
+*.bak
+*.tar.gz
+*.zip
+projects/anth-bot/runtime/
+projects/arb-hub/runtime/
 

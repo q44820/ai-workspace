@@ -24,6 +24,34 @@
 - [SCHEDULE_定时运行示例.md](projects/binance-monitors/SCHEDULE_定时运行示例.md)
 - [MIGRATION_迁移来源.json](projects/binance-monitors/MIGRATION_迁移来源.json)
 
+## 新增：服务器项目
+
+### Arb Hub｜套利聚合网页
+- [README.md（使用说明）](projects/arb-hub/README.md)
+- [app.py（网页与状态接口）](projects/arb-hub/app.py)
+- [official.py（公开行情适配）](projects/arb-hub/official.py)
+- [runtime.py（缓存与调度）](projects/arb-hub/runtime.py)
+- [public_proxy.py（只读反向代理）](projects/arb-hub/public_proxy.py)
+- [app.js（网页交互）](projects/arb-hub/static/app.js)
+- [index.html（网页首页）](projects/arb-hub/static/index.html)
+- [style.css（网页样式）](projects/arb-hub/static/style.css)
+- [test_hub.py（离线与回环HTTP测试）](projects/arb-hub/test_hub.py)
+- [requirements.txt（依赖说明）](projects/arb-hub/requirements.txt)
+- [WORKFLOW_工作流程.md](projects/arb-hub/WORKFLOW_工作流程.md)
+- [STATUS_当前状态.md](projects/arb-hub/STATUS_当前状态.md)
+- [MIGRATION_迁移来源.json](projects/arb-hub/MIGRATION_迁移来源.json)
+
+### ANTH Bot｜离线策略归档
+- [README.md（使用说明）](projects/anth-bot/README.md)
+- [bot.py（策略引擎，禁止实盘启动）](projects/anth-bot/bot.py)
+- [control.html（归档控制台界面）](projects/anth-bot/control.html)
+- [simtest.py（合成模拟场景）](projects/anth-bot/simtest.py)
+- [test_offline.py（禁网络安全测试）](projects/anth-bot/test_offline.py)
+- [requirements.txt（离线依赖）](projects/anth-bot/requirements.txt)
+- [WORKFLOW_工作流程.md](projects/anth-bot/WORKFLOW_工作流程.md)
+- [STATUS_当前状态.md](projects/anth-bot/STATUS_当前状态.md)
+- [MIGRATION_迁移来源.json](projects/anth-bot/MIGRATION_迁移来源.json)
+
 ## 文件与用途
 
 - [CHANGELOG_变更记录.md](CHANGELOG_变更记录.md) — 变更记录

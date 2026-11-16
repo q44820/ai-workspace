@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-Hans" data-theme="light">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>套利汇总（只读）</title>
+<link rel="stylesheet" href="/style.css?v=ui2fix1">
+<body>
+<header class="topbar">
+  <div class="brand"><strong>套利汇总</strong><span class="tag">只读 · 测试版</span></div>
+  <nav class="tabs" aria-label="视图">
+    <button type="button" data-page="funding">资金费套利</button>
+    <button type="button" data-page="spread">价差/现期</button>
+    <button type="button" data-page="sources">来源状态</button>
+  </nav>
+  <button type="button" id="theme" aria-label="切换浅色或深色">深色</button>
+</header>
+<main>
+  <div class="title-row">
+    <h1 id="heading">资金费套利</h1>
+    <div class="live-wrap">
+      <p id="mode">在线每30秒读取本地缓存；后台分源自动刷新</p>
+      <p id="live" class="live"><span class="dot" aria-hidden="true"></span><span id="stamp"></span></p>
+    </div>
+  </div>
+  <section id="overview" class="overview" aria-label="当前筛选概览"></section>
+  <section class="filters" aria-label="筛选">
+    <label>币种 <input id="search" placeholder="BTC（精确匹配）" autocomplete="off"></label>
+    <label>支持交易所 <select id="platform"><option value="">全部</option></select></label>
+    <label>来源 <select id="source"><option value="">全部</option><option value="official">官方公开汇总</option><option value="manual">本地导入</option></select></label>
+    <label>周期 <select id="period"><option value="">全部</option><option value="1">1h</option><option value="4">4h</option><option value="8">8h</option><option value="unknown">未知</option></select></label>
+    <label>状态 <select id="status"><option value="">可比较：已核对 + 未核实候选</option><option value="verified">本所官方身份核对</option><option value="candidate">身份未核实候选</option><option value="mixed">口径不同不可比</option><option value="anomaly">价格尺度异常（隔离）</option><option value="identity_unverified">无法核对（隔离）</option><option value="unknown">周期未知</option></select></label>
+    <label class="check"><input id="owned" type="checkbox" checked>仅支持交易所两端</label>
+    <label id="sort-wrap">排序 <select id="sort"><option value="net_desc">预计净收益 高→低</option></select></label>
+  </section>
+  <section class="plan" aria-label="测算假设">
+    <span class="plan-label">测算假设</span>
+    <label>单边名义 N <input id="notional" type="number" min="0" value="1000"></label>
+    <label>持有小时 <input id="hours" type="number" min="0" value="8"></label>
+    <label>单边吃单费率 % <input id="fee" type="number" min="0" value="0.05" step="0.01"></label>
+    <span class="plan-note">按当前假设重算；未计盘口深度与滑点，不是可执行净利。</span>
+  </section>
+  <p class="warning">这是筛选估算，未取盘口深度，不是可执行净利润；费率随时变，不保证未来，不构成交易建议。本页为独立只读汇总，不是 Coinglass 或 ArbTide 官方网站。</p>
+  <p class="rank-hint">排序分组优先：已核对且新鲜 → 未核实候选且新鲜 → 陈旧（仍可比） → 不可比 / 异常 / 缺数据；组内再按所选收益或费率差排序。候选身份未核实，不会改标为已核对。</p>
+  <section id="routes">
+    <p id="count"></p>
+    <p class="scroll-hint">左右滑动查看更多列</p>
+    <div id="table-wrap" class="table-wrap"><div id="rows"></div></div>
+    <div id="pager" class="pager"></div>
+    <details class="footnote"><summary>手动/本地导入 · 不含生产数据</summary><div id="manual"></div></details>
+    <details class="footnote"><summary>公开 pulse 摘要 · 缺腿不可执行</summary><pre id="pulse"></pre></details>
+  </section>
+  <section id="sources" hidden>
+    <h2>来源状态</h2>
+    <p class="hint">陈旧阈值按该源实际刷新周期的三倍（行情约 72–108 秒）。失败保留上次成功数据并标陈旧，不显示空壳成功。失败重试约 30–600 秒并遵守 Retry-After。官方汇总不是第三方网站原表，缺源会标明连接失败，不把未接入的 Bybit/Humarb 算作已接入。</p>
+    <div id="sourceRows"></div>
+  </section>
+  <footer class="legal">
+    <p>自动采集：Binance、OKX、Bitget、Gate、Hyperliquid、Entropy、Lighter（公开行情，约30秒分源刷新）。Bybit 因 403 未接入，Humarb 未接入，均不绕过。本页只读筛选，不登录、不下单、不含账户或密钥。若用明文 HTTP 访问则连接未加密，仅供查看。</p>
+    <p>费用 = 4 × 单边费率 × 单边名义 N（两腿开平四笔）。资金费估算 = 每小时差 × 小时 × N，预计净收益为该估算减四笔费用，不保证可赚；未计滑点、借贷、汇兑、盘口深度。现期原始 basis = 永续报价 / 现货最新价 − 1；扣费后价差只用同一单边费率×四笔做示例，不是可成交净利，也不是均值回归收益。各视图默认按当前 N、持有小时、费率把收益或价差从高到低排，改参数即重算；不可比或缺失不记为 0。</p>
+  </footer>
+</main>
+<script src="/app.js?v=ui2fix1"></script>
+</body>
+</html>

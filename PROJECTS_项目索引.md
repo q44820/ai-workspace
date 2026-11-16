@@ -13,6 +13,11 @@ P1为维护主线，P2为次级，**P3为最低档**。优先级仅影响工作�
 
 - **[币安Alpha与Booster监控](projects/binance-monitors/README.md)**：对应OpenClaw清单第1、2项；两份代码与定时示例，默认关闭推送，不改既有任务。新增维护优先级待用户安排，不挤占P1主线。
 
+## 新增：服务器项目（优先级待定）
+
+- **[Arb Hub套利聚合网页](projects/arb-hub/README.md)**：独立公开行情聚合项目，不含生产快照或配置。
+- **[ANTH机器人离线归档](projects/anth-bot/README.md)**：历史衍生品策略与合成模拟，仅研究用途，真实交易/服务启动被禁止。
+
 ## 所有AI的入口
 
 1. [AGENTS.md](AGENTS.md)：协作与安全边界。

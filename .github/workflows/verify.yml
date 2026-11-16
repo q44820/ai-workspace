@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install offline test dependency
-        run: python3 -m pip install 'pycryptodome>=3.20,<4'
+        run: python3 -m pip install 'pycryptodome>=3.20,<4' 'aiohttp>=3.9,<4'
       - name: Offline checks
         run: python3 scripts/verify_workspace.py
       - name: Scan tracked content
@@ -26,4 +26,5 @@ jobs:
       - name: JavaScript syntax
         run: |
           node --check projects/basis-radar/static/app.js
+          node --check projects/arb-hub/static/app.js
           node --check projects/lp-monitor/scripts/bncb_lp_snapshot.cjs

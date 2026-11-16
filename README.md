@@ -14,9 +14,14 @@
 4. [实际验收与限制](docs/VERIFICATION_验收记录.md)
 5. [安全规则](SECURITY_安全规则.md)、[变更记录](CHANGELOG_变更记录.md)
 
-已迁入01价差网页、03 LP监控、07 Polymarket研究、09天气研究、10跨平台监控、19机票工具的代码副本与工作流程。Polymarket相关统一P3最低优先级；不含实盘下单执行器。
+已迁入01价差网页、03 LP监控、07 Polymarket研究、09天气研究、10跨平台监控、19机票工具的代码副本与工作流程。Polymarket相关统一P3最低优先级；这些项目不含实盘下单执行器。另有ANTH历史策略代码归档，已禁用真实交易和服务启动。
 
 另新增[币安Alpha与Booster监控](projects/binance-monitors/README.md)，包含两项定时脚本副本、通知适配与离线测试；默认不推送，不修改现有运行任务。
+
+## 新增：服务器项目
+
+- [Arb Hub套利聚合网页](projects/arb-hub/README.md)：公开行情与中文网页，独立runtime，不含旧快照和导入数据。
+- [ANTH机器人离线归档](projects/anth-bot/README.md)：策略/界面/合成测试，真实交易与服务启动已阻断；不含账户和历史成交。
 
 ## 其他AI接入
 

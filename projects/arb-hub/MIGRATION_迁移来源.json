@@ -1,0 +1,60 @@
+{
+  "project": "arb-hub",
+  "source": "read-only production source snapshot; host identity intentionally omitted",
+  "files": [
+    {
+      "source": "app.py",
+      "source_sha256": "6606c90b853d03b4a7629618c92e05aceeab892af76c83668fa89328af0b1d00",
+      "target": "app.py",
+      "target_sha256": "4f99ec87217fdf9c37f476e3722b9a4266588a0f8b5ecb049445d4659ca98441"
+    },
+    {
+      "source": "public_proxy.py",
+      "source_sha256": "e93b834f8c479201d9e91cbd61f04e6f04a2f68ea172bb657300148ae315cdc5",
+      "target": "public_proxy.py",
+      "target_sha256": "e93b834f8c479201d9e91cbd61f04e6f04a2f68ea172bb657300148ae315cdc5"
+    },
+    {
+      "source": "official.py",
+      "source_sha256": "de05219b52e42ddd184b5e15f3304db61aba6dd89616972731b8fd2925bee275",
+      "target": "official.py",
+      "target_sha256": "de05219b52e42ddd184b5e15f3304db61aba6dd89616972731b8fd2925bee275"
+    },
+    {
+      "source": "runtime.py",
+      "source_sha256": "118180f7dd710b77c9354c4bcd1d6a5df8d690b1bf4c1f304364e4b2a42b6695",
+      "target": "runtime.py",
+      "target_sha256": "118180f7dd710b77c9354c4bcd1d6a5df8d690b1bf4c1f304364e4b2a42b6695"
+    },
+    {
+      "source": "static/app.js",
+      "source_sha256": "a991e8042ea65b61c2854061318493dfd152a345017a1fa4fd46a0303a29c890",
+      "target": "static/app.js",
+      "target_sha256": "a991e8042ea65b61c2854061318493dfd152a345017a1fa4fd46a0303a29c890"
+    },
+    {
+      "source": "static/index.html",
+      "source_sha256": "812b1869d6c53359af241570592f98625abad1033de10d71d8e8fa1203b3000e",
+      "target": "static/index.html",
+      "target_sha256": "8921439fb4a4b32d100c1c1430e22991ef7a5810c7996d64b87bd38d5e453d4e"
+    },
+    {
+      "source": "static/style.css",
+      "source_sha256": "24f6e65462a7cea6d40d076c9a2571d0db2f759414d64a1dcd7e0603aca069f1",
+      "target": "static/style.css",
+      "target_sha256": "24f6e65462a7cea6d40d076c9a2571d0db2f759414d64a1dcd7e0603aca069f1"
+    }
+  ],
+  "excluded": [
+    "account configuration",
+    "secrets",
+    "environment files",
+    "state",
+    "logs",
+    "databases",
+    "backups",
+    "production service definitions",
+    "historical fills and account tests"
+  ],
+  "production_modified": false
+}
