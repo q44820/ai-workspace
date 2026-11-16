@@ -27,4 +27,5 @@ jobs:
         run: |
           node --check projects/basis-radar/static/app.js
           node --check projects/arb-hub/static/app.js
+          node --check projects/program-dashboard/static/app.js
           node --check projects/lp-monitor/scripts/bncb_lp_snapshot.cjs

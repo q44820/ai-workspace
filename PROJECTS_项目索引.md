@@ -18,6 +18,10 @@ P1为维护主线，P2为次级，**P3为最低档**。优先级仅影响工作�
 - **[Arb Hub套利聚合网页](projects/arb-hub/README.md)**：独立公开行情聚合项目，不含生产快照或配置。
 - **[ANTH机器人离线归档](projects/anth-bot/README.md)**：历史衍生品策略与合成模拟，仅研究用途，真实交易/服务启动被禁止。
 
+## 程序总览与状态
+
+- **[Program Dashboard程序总览](projects/program-dashboard/README.md)**：部署于服务器的只读列表，本机纯脚本同步，区分运行/启用/停止/异常/归档；不展示账户和操作按钮。
+
 ## 所有AI的入口
 
 1. [AGENTS.md](AGENTS.md)：协作与安全边界。

@@ -52,6 +52,20 @@
 - [STATUS_当前状态.md](projects/anth-bot/STATUS_当前状态.md)
 - [MIGRATION_迁移来源.json](projects/anth-bot/MIGRATION_迁移来源.json)
 
+## 程序总览看板
+
+- [README.md（看板说明）](projects/program-dashboard/README.md)
+- [server.py（只读网页与状态API）](projects/program-dashboard/server.py)
+- [collect_local.py（本机脱敏状态采集）](projects/program-dashboard/collect_local.py)
+- [catalog.json（程序功能目录）](projects/program-dashboard/catalog.json)
+- [index.html（看板页面）](projects/program-dashboard/static/index.html)
+- [app.js（搜索筛选与状态刷新）](projects/program-dashboard/static/app.js)
+- [style.css（桌面手机样式）](projects/program-dashboard/static/style.css)
+- [test_dashboard.py（访问与状态测试）](projects/program-dashboard/test_dashboard.py)
+- [requirements.txt（依赖说明）](projects/program-dashboard/requirements.txt)
+- [WORKFLOW_工作流程.md](projects/program-dashboard/WORKFLOW_工作流程.md)
+- [STATUS_当前状态.md](projects/program-dashboard/STATUS_当前状态.md)
+
 ## 文件与用途
 
 - [CHANGELOG_变更记录.md](CHANGELOG_变更记录.md) — 变更记录

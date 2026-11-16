@@ -1,0 +1,140 @@
+[
+  {
+    "id": "basis-radar",
+    "name": "价差中位数网页",
+    "category": "行情网页",
+    "location": "日本服务器",
+    "purpose": "观察公开市场价差、中位数与方向；只读不下单",
+    "usage": "进入原价差网页使用；变更先测试后单独部署",
+    "schedule": "持续服务",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/basis-radar"
+  },
+  {
+    "id": "arb-hub",
+    "name": "Arb Hub套利聚合网页",
+    "category": "行情网页",
+    "location": "日本服务器",
+    "purpose": "汇总公开资金费和价差来源，区分缓存、失效及数据身份",
+    "usage": "通过原聚合网页使用；公开代码不含历史机会快照",
+    "schedule": "持续服务",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/arb-hub"
+  },
+  {
+    "id": "anth-bot",
+    "name": "ANTH价差机器人",
+    "category": "策略归档／原服务",
+    "location": "日本服务器",
+    "purpose": "历史ANTH跨所价差策略；这里只读服务存在，不检查账户订单",
+    "usage": "GitHub为强制离线归档，禁止直接实盘启动；线上账户状态未核验",
+    "schedule": "持续服务",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/anth-bot"
+  },
+  {
+    "id": "program-dashboard",
+    "name": "程序总览看板",
+    "category": "管理工具",
+    "location": "日本服务器",
+    "purpose": "集中查看程序功能、运行状态、代码与维护方式",
+    "usage": "本网页仅展示，不提供启停、部署或交易按钮",
+    "schedule": "持续服务",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/program-dashboard"
+  },
+  {
+    "id": "basis-tunnel",
+    "name": "价差网页外网通道",
+    "category": "访问与基础设施",
+    "location": "日本服务器",
+    "purpose": "为原价差网页提供HTTPS访问通道",
+    "usage": "只读观察隧道服务；不展示认证信息",
+    "schedule": "持续服务",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/basis-radar"
+  },
+  {
+    "id": "dashboard-tunnel",
+    "name": "程序看板外网通道",
+    "category": "访问与基础设施",
+    "location": "日本服务器",
+    "purpose": "为本看板提供HTTPS访问通道",
+    "usage": "持有私密链接才可查看；不要公开转发",
+    "schedule": "持续服务",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/program-dashboard"
+  },
+  {
+    "id": "network-xray",
+    "name": "代理网络服务A",
+    "category": "访问与基础设施",
+    "location": "日本服务器",
+    "purpose": "已有网络连接基础设施；不展示订阅和连接配置",
+    "usage": "维护属于独立授权范围，不从看板直接操作",
+    "schedule": "持续服务"
+  },
+  {
+    "id": "network-hysteria",
+    "name": "代理网络服务B",
+    "category": "访问与基础设施",
+    "location": "日本服务器",
+    "purpose": "已有网络连接基础设施；不展示订阅和连接配置",
+    "usage": "维护属于独立授权范围，不从看板直接操作",
+    "schedule": "持续服务"
+  },
+  {
+    "id": "lp-monitor",
+    "name": "LP仓位与区间监控代码",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "价格与低频仓位核对分开；零模型脚本，不展示钱包和仓位",
+    "usage": "本机任务状态见下方本机服务；代码存在不表示已部署",
+    "schedule": "手动／见本机调度",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/lp-monitor"
+  },
+  {
+    "id": "binance-monitors",
+    "name": "币安Alpha与Booster代码",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "Alpha空投变化及Booster/公告监控，公开副本默认关闭推送",
+    "usage": "两项实际调度见本机服务；更新代码不自动改现有任务",
+    "schedule": "手动／见本机调度",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/binance-monitors"
+  },
+  {
+    "id": "flights",
+    "name": "机票查询研究工具",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "显式机场/日期/人数校验与历史查询适配",
+    "usage": "手动查询工具，不能保证含税价格及足量座位",
+    "schedule": "手动／见本机调度",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/flights"
+  },
+  {
+    "id": "polymarket-research",
+    "name": "Polymarket候选研究",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "只读候选与市场研究扫描，无实盘执行器",
+    "usage": "最低维护优先级；旧定时状态见内部任务区",
+    "schedule": "手动／见本机调度",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/polymarket-research"
+  },
+  {
+    "id": "weather-research",
+    "name": "天气策略历史研究",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "历史天气样本与模拟参考，旧猜测结算入口禁用",
+    "usage": "不当成实时策略或当前可交易建议",
+    "schedule": "手动／见本机调度",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/weather-research"
+  },
+  {
+    "id": "prediction-cross",
+    "name": "预测市场跨平台监控",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "历史Polymarket—Opinion监控与对比参考",
+    "usage": "默认无事件对，选择器与实时费率未验收",
+    "schedule": "手动／见本机调度",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/prediction-cross"
+  }
+]

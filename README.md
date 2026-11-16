@@ -23,6 +23,10 @@
 - [Arb Hub套利聚合网页](projects/arb-hub/README.md)：公开行情与中文网页，独立runtime，不含旧快照和导入数据。
 - [ANTH机器人离线归档](projects/anth-bot/README.md)：策略/界面/合成测试，真实交易与服务启动已阻断；不含账户和历史成交。
 
+## 程序总览
+
+[Program Dashboard程序总览看板](projects/program-dashboard/README.md)：统一查看已登记服务器服务、本机调度与代码项目；实时快照及带访问码的私密入口不放Git。
+
 ## 其他AI接入
 
 其他AI可直接读取公开代码和文档，从README和目标项目STATUS开始，先读后改。修改通过独立分支和PR；直接推送主分支仍需仓库权限，公开不代表任意写入。不要把GitHub Token贴进聊天。
