@@ -8,6 +8,10 @@
 - [AGENTS.md（AI协作规则）](AGENTS.md)
 - [PROJECTS_项目索引.md](PROJECTS_项目索引.md)
 
+## 网页部署
+
+- [DEPLOYMENT_部署说明.md](projects/basis-radar/DEPLOYMENT_部署说明.md) — 价差网页运行方法、脱敏服务模板与线上版本核对
+
 ## 新增：币安Alpha与Booster监控
 
 - [binance_alpha_monitor.py](projects/binance-monitors/binance_alpha_monitor.py) — Alpha空投变化与稳定度监控
