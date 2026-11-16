@@ -40,61 +40,23 @@
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/program-dashboard"
   },
   {
-    "id": "basis-tunnel",
-    "name": "价差网页外网通道",
-    "category": "访问与基础设施",
-    "location": "日本服务器",
-    "purpose": "为原价差网页提供HTTPS访问通道",
-    "usage": "只读观察隧道服务；不展示认证信息",
-    "schedule": "持续服务",
-    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/basis-radar"
-  },
-  {
-    "id": "dashboard-tunnel",
-    "name": "程序看板外网通道",
-    "category": "访问与基础设施",
-    "location": "日本服务器",
-    "purpose": "为本看板提供HTTPS访问通道",
-    "usage": "持有私密链接才可查看；不要公开转发",
-    "schedule": "持续服务",
-    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/program-dashboard"
-  },
-  {
-    "id": "network-xray",
-    "name": "代理网络服务A",
-    "category": "访问与基础设施",
-    "location": "日本服务器",
-    "purpose": "已有网络连接基础设施；不展示订阅和连接配置",
-    "usage": "维护属于独立授权范围，不从看板直接操作",
-    "schedule": "持续服务"
-  },
-  {
-    "id": "network-hysteria",
-    "name": "代理网络服务B",
-    "category": "访问与基础设施",
-    "location": "日本服务器",
-    "purpose": "已有网络连接基础设施；不展示订阅和连接配置",
-    "usage": "维护属于独立授权范围，不从看板直接操作",
-    "schedule": "持续服务"
-  },
-  {
     "id": "lp-monitor",
     "name": "LP仓位与区间监控代码",
     "category": "代码项目",
     "location": "本机／代码库",
     "purpose": "价格与低频仓位核对分开；零模型脚本，不展示钱包和仓位",
-    "usage": "本机任务状态见下方本机服务；代码存在不表示已部署",
+    "usage": "代码及中文说明见GitHub；当前运行状态尚未建立精确绑定，不据此判断停止",
     "schedule": "手动／见本机调度",
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/lp-monitor"
   },
   {
-    "id": "binance-monitors",
-    "name": "币安Alpha与Booster代码",
+    "id": "binance-alpha",
+    "name": "币安Alpha监控",
     "category": "代码项目",
     "location": "本机／代码库",
-    "purpose": "Alpha空投变化及Booster/公告监控，公开副本默认关闭推送",
-    "usage": "两项实际调度见本机服务；更新代码不自动改现有任务",
-    "schedule": "手动／见本机调度",
+    "purpose": "跟踪Alpha项目、空投变化及提醒；公开副本默认关闭推送",
+    "usage": "本机原定时监控；代码更新不自动部署或修改调度",
+    "schedule": "每10分钟",
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/binance-monitors"
   },
   {
@@ -113,7 +75,7 @@
     "category": "代码项目",
     "location": "本机／代码库",
     "purpose": "只读候选与市场研究扫描，无实盘执行器",
-    "usage": "最低维护优先级；旧定时状态见内部任务区",
+    "usage": "最低维护优先级；仅保留GitHub中的只读研究代码，不关联未上传的旧实盘任务",
     "schedule": "手动／见本机调度",
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/polymarket-research"
   },
@@ -136,5 +98,15 @@
     "usage": "默认无事件对，选择器与实时费率未验收",
     "schedule": "手动／见本机调度",
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/prediction-cross"
+  },
+  {
+    "id": "binance-booster",
+    "name": "币安Booster监控",
+    "category": "代码项目",
+    "location": "本机／代码库",
+    "purpose": "跟踪Booster与币安公告变化；公开副本默认关闭推送",
+    "usage": "本机原定时监控；代码更新不自动部署或修改调度",
+    "schedule": "每10分钟",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/binance-monitors"
   }
 ]

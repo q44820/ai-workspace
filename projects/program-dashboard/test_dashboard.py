@@ -32,11 +32,11 @@ class DashboardTests(unittest.TestCase):
         with patch.object(server.subprocess,'run',return_value=result):
             self.assertEqual(server.service_status('system','fixture.service')['state'],'unknown')
     def test_04_stale_local_status_not_current(self):
-        data={'captured_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat(),'items':[{'id':'fixture','name':'测试程序','state':'running','private_key':'must-not-leak'}]}
+        data={'captured_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat(),'items':[{'id':'binance-alpha','name':'测试程序','state':'running','private_key':'must-not-leak'}]}
         (self.runtime/'local_snapshot.json').write_text(json.dumps(data))
-        d=server.Inventory(self.runtime,catalog=[]).snapshot()
+        d=server.Inventory(self.runtime,catalog=[{'id':'binance-alpha','name':'币安Alpha'}]).snapshot()
         self.assertEqual(d['local_sync']['state'],'stale')
-        row=next(x for x in d['items'] if x['id']=='fixture')
+        row=next(x for x in d['items'] if x['id']=='binance-alpha')
         self.assertEqual(row['state'],'unknown');self.assertNotIn('private_key',row)
     def test_05_missing_snapshot(self):
         d=server.Inventory(self.runtime,catalog=[]).snapshot()
@@ -62,18 +62,26 @@ class DashboardTests(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as caught:opener.open(req,timeout=4)
                 self.assertEqual(caught.exception.code,405)
         finally:http.shutdown();http.server_close();thread.join()
-    def test_07_collector_excludes_prompts(self):
-        p=self.runtime/'.hermes/cron/jobs.json';p.parent.mkdir(parents=True)
-        p.write_text(json.dumps({'jobs':[{'name':'Luna private title','enabled':False,'prompt':'DO_NOT_PUBLISH','last_error':'SECRET_ERROR','schedule':{'kind':'once'},'origin':{'chat_id':'PRIVATE_CHAT'}}]}))
-        rows,ok=collect_local.hermes_items(self.runtime);s=json.dumps(rows)
-        self.assertTrue(ok)
-        for forbidden in ['DO_NOT_PUBLISH','SECRET_ERROR','PRIVATE_CHAT','Luna private title']:self.assertNotIn(forbidden,s)
-        self.assertEqual(rows[0]['state'],'stopped')
-    def test_08_unknown_collector_read_is_incomplete(self):
-        d=collect_local.collect(self.runtime)
-        self.assertTrue(any(r['id']=='local-inspection-warning' for r in d['items']))
-    def test_09_schedule_sanitization(self):
-        self.assertEqual(collect_local.schedule_text({'kind':'cron','expr':'https://sensitive'}),'按原任务计划')
-        self.assertEqual(collect_local.schedule_text({'kind':'cron','expr':'*/5 * * * *'}),'cron */5 * * * *')
+    def test_07_old_snapshot_cannot_reintroduce_non_github_tasks(self):
+        data={'captured_at':datetime.now(timezone.utc).isoformat(),'items':[{'id':'old-task','name':'SHOULD_NOT_APPEAR','state':'running'},{'id':'binance-alpha','state':'scheduled','name':'DO_NOT_OVERRIDE_NAME','private_key':'must-not-leak'}]}
+        (self.runtime/'local_snapshot.json').write_text(json.dumps(data))
+        d=server.Inventory(self.runtime,catalog=[{'id':'binance-alpha','name':'币安Alpha'}]).snapshot()
+        self.assertEqual(len(d['items']),1)
+        self.assertEqual(d['items'][0]['name'],'币安Alpha')
+        self.assertEqual(d['items'][0]['state'],'scheduled')
+        self.assertNotIn('must-not-leak',json.dumps(d))
+    def test_08_collector_only_reads_exact_github_bindings(self):
+        with patch.object(collect_local.subprocess,'check_output',return_value='PID Status Label\n'):
+            d=collect_local.collect(self.runtime)
+        self.assertEqual(d['items'],[])
+        self.assertEqual(set(collect_local.PROJECT_IDS.values()),{'binance-alpha','binance-booster'})
+    def test_09_catalog_matches_all_github_project_directories(self):
+        rows=json.loads((server.HERE/'catalog.json').read_text())
+        slugs={row['code'].rsplit('/',1)[-1] for row in rows}
+        actual={p.name for p in server.HERE.parent.iterdir() if p.is_dir() and (p/'README.md').is_file()}
+        self.assertEqual(slugs,actual)
+        self.assertEqual(len(rows),len({row['id'] for row in rows}))
+        self.assertTrue(all(row['code'].startswith('https://github.com/q44820/ai-workspace/tree/main/projects/') for row in rows))
+        self.assertNotIn('network-xray',{row['id'] for row in rows})
 
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -14,13 +14,9 @@ import time
 HERE = Path(__file__).resolve().parent
 SERVICE_MAP = {
     'basis-radar': ('user', 'basis-radar.service'),
-    'basis-tunnel': ('user', 'basis-radar-tunnel.service'),
     'arb-hub': ('system', 'arb-hub.service'),
     'anth-bot': ('system', 'anth-bot.service'),
-    'network-xray': ('system', 'xray.service'),
-    'network-hysteria': ('system', 'hysteria-server.service'),
     'program-dashboard': ('system', 'program-dashboard.service'),
-    'dashboard-tunnel': ('system', 'program-dashboard-tunnel.service'),
 }
 
 def utcnow():
@@ -64,8 +60,10 @@ class Inventory:
                 if row['id'] in SERVICE_MAP:
                     row.update(service_status(*SERVICE_MAP[row['id']]))
                     row['checked_at'] = utcnow()
+                elif row['id'] in {'binance-alpha','binance-booster','lp-monitor'}:
+                    row.update(state='unknown',label='运行状态待核验',detail='代码已在GitHub；尚无可用的精确运行状态，不能认定已停止',checked_at=utcnow())
                 else:
-                    row.update(state='manual', label='手动使用／未部署', detail='代码已归档；没有此主机上的常驻服务证据', checked_at=utcnow())
+                    row.update(state='manual', label='手动使用／代码归档', detail='代码已在GitHub；未绑定常驻服务，不代表现有服务已停止', checked_at=utcnow())
                 items.append(row)
             sync = {'state':'missing','label':'本机状态尚未同步','age_seconds':None}
             try:
@@ -76,17 +74,20 @@ class Inventory:
                 age = max(0, int((datetime.now(timezone.utc)-captured).total_seconds()))
                 stale = age > 900
                 sync = {'state':'stale' if stale else 'fresh','label':'本机数据过期' if stale else '本机数据已同步','age_seconds':age,'captured_at':local['captured_at']}
-                allowed = {'id','name','category','location','purpose','schedule','state','label','detail','code','usage','checked_at'}
+                allowed = {'schedule','state','label','detail','checked_at'}
+                by_id = {row['id']:row for row in items}
                 for data in local.get('items',[]):
-                    if not isinstance(data,dict) or not {'id','name','state'}.issubset(data):
+                    if not isinstance(data,dict) or data.get('id') not in {'binance-alpha','binance-booster'}:
                         continue
-                    row = {key:data[key] for key in allowed if key in data}
+                    row = by_id.get(data['id'])
+                    if row is None:
+                        continue
+                    row.update({key:data[key] for key in allowed if key in data})
                     if stale:
                         row.update(state='unknown',label='状态已过期',detail='本机同步超过15分钟，不能把旧状态当当前状态')
-                    items.append(row)
             except (OSError, ValueError, TypeError, KeyError):
                 pass
-            self.cached = {'generated_at':utcnow(),'read_only':True,'local_sync':sync,'items':items,'scope':'日本服务器已登记服务＋本机项目/LaunchAgent/OpenClaw与Hermes任务；不是全磁盘软件清单。','privacy':'不展示密钥、账户、资产、持仓、日志、原始命令、机器地址或认证配置。','status_note':'运行中仅表示进程存在；定时启用不等于任务成功；停止不等于代码不存在。'}
+            self.cached = {'generated_at':utcnow(),'read_only':True,'local_sync':sync,'items':items,'scope':'仅展示GitHub代码库中的项目；Alpha与Booster分别显示状态，不列未上传的旧任务、代理和系统服务。','privacy':'不展示密钥、账户、资产、持仓、日志、原始命令、机器地址或认证配置。','status_note':'运行中仅表示进程存在；定时启用不等于任务成功；停止不等于代码不存在。'}
             self.cached_at = time.monotonic()
             return self.cached
 
