@@ -16,6 +16,7 @@ def main():
     for p in files:ast.parse(p.read_text(),filename=str(p))
     print('python_syntax_files='+str(len(files)),flush=True)
     run([sys.executable,'-m','unittest','discover','-s','tests','-v'],ROOT)
+    run([sys.executable,'-m','unittest','test_monitors','-v'],ROOT/'projects/binance-monitors')
     run([sys.executable,'-m','unittest','discover','-p','test_*.py','-v'],ROOT/'projects/basis-radar')
     run([sys.executable,'test_bncb_lp_monitor.py'],ROOT/'projects/lp-monitor/scripts')
     run([sys.executable,'-m','unittest','test_lp_wallet_watchdog','-v'],ROOT/'projects/lp-monitor/scripts')
@@ -29,7 +30,7 @@ def main():
         except ValueError:pass
         else:raise AssertionError('invalid flight parameters accepted')
     run([sys.executable,str(p),'--dep','PEK','--arr','SHA','--date',future],ROOT)
-    for slug in ['basis-radar','lp-monitor','polymarket-research','weather-research','prediction-cross','flights']:
+    for slug in ['basis-radar','lp-monitor','polymarket-research','weather-research','prediction-cross','flights','binance-monitors']:
         for name in ['README.md','WORKFLOW_工作流程.md','STATUS_当前状态.md']:assert (ROOT/'projects'/slug/name).is_file()
     migration=json.loads((ROOT/'docs/MIGRATION.json').read_text())
     import hashlib

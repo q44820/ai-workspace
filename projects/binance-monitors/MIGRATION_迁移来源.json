@@ -1,0 +1,26 @@
+{
+  "files": [
+    {
+      "source": "scripts/binance_alpha_monitor.py",
+      "source_sha256": "3474e9f0f310b6339e347bb9675fe3dc07e55b8c0b6165ae9343e6ef5f36e490",
+      "target": "projects/binance-monitors/binance_alpha_monitor.py",
+      "target_sha256": "2e04fabb787c28a53b4ee4b367c68696f4a9f6deda8414cedc1d44fd740109bf",
+      "changes": [
+        "仅迁移代码副本，未修改运行文件",
+        "默认推送关闭、运行数据隔离到runtime、Telegram仅环境变量、日志脱敏",
+        "不复制状态、日志、凭据或实际LaunchAgent配置"
+      ]
+    },
+    {
+      "source": "scripts/binance_booster_monitor.py",
+      "source_sha256": "8410b1071304f1b3014005dbde2c79cf3c48d5469d16b134517bbcc6776cbfca",
+      "target": "projects/binance-monitors/binance_booster_monitor.py",
+      "target_sha256": "1dc584ea734a5fb7abe27345816d574bd1604e77b0c93dd7966aa76461f31aee",
+      "changes": [
+        "仅迁移代码副本，未修改运行文件",
+        "默认推送关闭、运行数据隔离到runtime、Telegram仅环境变量、日志脱敏",
+        "不复制状态、日志、凭据或实际LaunchAgent配置"
+      ]
+    }
+  ]
+}

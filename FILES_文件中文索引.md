@@ -8,6 +8,18 @@
 - [AGENTS.md（AI协作规则）](AGENTS.md)
 - [PROJECTS_项目索引.md](PROJECTS_项目索引.md)
 
+## 新增：币安Alpha与Booster监控
+
+- [binance_alpha_monitor.py](projects/binance-monitors/binance_alpha_monitor.py) — Alpha空投变化与稳定度监控
+- [binance_booster_monitor.py](projects/binance-monitors/binance_booster_monitor.py) — Booster与币安公告监控
+- [telegram_runtime.py](projects/binance-monitors/telegram_runtime.py) — 环境变量通知与日志脱敏
+- [test_monitors.py](projects/binance-monitors/test_monitors.py) — 15项离线测试
+- [README.md（使用说明）](projects/binance-monitors/README.md)
+- [WORKFLOW_工作流程.md](projects/binance-monitors/WORKFLOW_工作流程.md)
+- [STATUS_当前状态.md](projects/binance-monitors/STATUS_当前状态.md)
+- [SCHEDULE_定时运行示例.md](projects/binance-monitors/SCHEDULE_定时运行示例.md)
+- [MIGRATION_迁移来源.json](projects/binance-monitors/MIGRATION_迁移来源.json)
+
 ## 文件与用途
 
 - [CHANGELOG_变更记录.md](CHANGELOG_变更记录.md) — 变更记录

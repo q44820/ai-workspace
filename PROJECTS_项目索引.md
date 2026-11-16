@@ -9,6 +9,10 @@ P1为维护主线，P2为次级，**P3为最低档**。优先级仅影响工作�
 - **09｜P3｜[天气研究](projects/weather-research/README.md)**：历史研究与模拟参考；含硬编码样本，旧结算入口禁用，不能当实时策略。
 - **10｜P3｜[预测市场跨平台监控](projects/prediction-cross/README.md)**：历史Polymarket—Opinion监控；默认无事件对，选择器/费率未实时验收。
 
+## 新增：币安监控
+
+- **[币安Alpha与Booster监控](projects/binance-monitors/README.md)**：对应OpenClaw清单第1、2项；两份代码与定时示例，默认关闭推送，不改既有任务。新增维护优先级待用户安排，不挤占P1主线。
+
 ## 所有AI的入口
 
 1. [AGENTS.md](AGENTS.md)：协作与安全边界。

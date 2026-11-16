@@ -16,6 +16,8 @@
 
 已迁入01价差网页、03 LP监控、07 Polymarket研究、09天气研究、10跨平台监控、19机票工具的代码副本与工作流程。Polymarket相关统一P3最低优先级；不含实盘下单执行器。
 
+另新增[币安Alpha与Booster监控](projects/binance-monitors/README.md)，包含两项定时脚本副本、通知适配与离线测试；默认不推送，不修改现有运行任务。
+
 ## 其他AI接入
 
 其他AI可直接读取公开代码和文档，从README和目标项目STATUS开始，先读后改。修改通过独立分支和PR；直接推送主分支仍需仓库权限，公开不代表任意写入。不要把GitHub Token贴进聊天。
