@@ -40,13 +40,33 @@
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/program-dashboard"
   },
   {
-    "id": "lp-monitor",
-    "name": "LP仓位与区间监控代码",
-    "category": "代码项目",
-    "location": "本机／代码库",
-    "purpose": "价格与低频仓位核对分开；零模型脚本，不展示钱包和仓位",
-    "usage": "代码及中文说明见GitHub；当前运行状态尚未建立精确绑定，不据此判断停止",
-    "schedule": "手动／见本机调度",
+    "id": "lp-bncb-bnb",
+    "name": "BNCB/BNB LP区间监控",
+    "category": "LP区间与仓位监控",
+    "location": "本机",
+    "purpose": "监控BNCB/BNB交易对LP的相对价格区间；距离边界≤2%或越界提醒，正常静默；提醒价格折U显示",
+    "usage": "源码 scripts/bncb_lp_monitor.py 与 bncb_lp_snapshot.cjs；只读链上，不自动交易，零模型调用；进程与最近成功检查分开核验",
+    "schedule": "每30分钟",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/lp-monitor"
+  },
+  {
+    "id": "lp-price-range",
+    "name": "LP币价区间监控",
+    "category": "LP区间与仓位监控",
+    "location": "本机",
+    "purpose": "跟踪配置中的币价U区间，跌破、突破及回到区间时按规则提醒；不在网页展示钱包或实际区间",
+    "usage": "源码 scripts/meme_lp_price_monitor.py；价格监控与低频仓位核对分离；进程在线不代表价格源和通知送达已验证",
+    "schedule": "按运行配置持续检查",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/lp-monitor"
+  },
+  {
+    "id": "lp-wallet-watchdog",
+    "name": "LP仓位核对与区间自动同步",
+    "category": "LP区间与仓位监控",
+    "location": "本机",
+    "purpose": "低频只读核对有效LP；仓位新增、退出或重组后同步价格监控清单，未知结果不当作退出",
+    "usage": "源码 scripts/lp_wallet_watchdog.py、lp_monitor_sync.py；可能更新本地监控配置，不签名、不交易；进程状态不代表所有RPC健康",
+    "schedule": "低频轮询，按运行配置",
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/lp-monitor"
   },
   {

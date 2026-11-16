@@ -9,6 +9,7 @@ import unittest
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 
@@ -71,7 +72,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(d['items'][0]['state'],'scheduled')
         self.assertNotIn('must-not-leak',json.dumps(d))
     def test_08_collector_only_reads_exact_github_bindings(self):
-        with patch.object(collect_local.subprocess,'check_output',return_value='PID Status Label\n'):
+        with patch.object(collect_local.subprocess,'check_output',return_value='PID Status Label\n'), patch.object(collect_local,'pm2_items',return_value=([],True)):
             d=collect_local.collect(self.runtime)
         self.assertEqual(d['items'],[])
         self.assertEqual(set(collect_local.PROJECT_IDS.values()),{'binance-alpha','binance-booster'})
@@ -83,5 +84,27 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(rows),len({row['id'] for row in rows}))
         self.assertTrue(all(row['code'].startswith('https://github.com/q44820/ai-workspace/tree/main/projects/') for row in rows))
         self.assertNotIn('network-xray',{row['id'] for row in rows})
+
+    def test_10_lp_pm2_identity_and_privacy(self):
+        rows=[{'name':'bncb-lp-range-monitor','pid':42,'pm2_env':{'status':'online','pm_exec_path':str(self.runtime/'clawd/scripts/bncb_lp_monitor.py'),'SECRET':'NEVER_UPLOAD'}}]
+        state=self.runtime/'clawd/output/bncb_lp_monitor/state.json';state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({'lastSuccessAt':datetime.now(timezone.utc).isoformat(),'error':None,'wallet':'NEVER_UPLOAD'}))
+        response=SimpleNamespace(returncode=0,stdout=json.dumps(rows))
+        with patch.object(collect_local.subprocess,'run',return_value=response):
+            output,ok=collect_local.pm2_items(self.runtime)
+        self.assertTrue(ok);self.assertEqual(output[0]['id'],'lp-bncb-bnb');self.assertEqual(output[0]['state'],'running');self.assertNotIn('NEVER_UPLOAD',json.dumps(output))
+        rows[0]['pm2_env']['pm_exec_path']='/wrong/bncb_lp_monitor.py';response.stdout=json.dumps(rows)
+        with patch.object(collect_local.subprocess,'run',return_value=response):self.assertEqual(collect_local.pm2_items(self.runtime)[0],[])
+    def test_11_lp_error_is_not_hidden_by_online_process(self):
+        rows=[{'name':'bncb-lp-range-monitor','pid':42,'pm2_env':{'status':'online','pm_exec_path':str(self.runtime/'clawd/scripts/bncb_lp_monitor.py')}}]
+        state=self.runtime/'clawd/output/bncb_lp_monitor/state.json';state.parent.mkdir(parents=True);state.write_text(json.dumps({'lastSuccessAt':datetime.now(timezone.utc).isoformat(),'error':'PRIVATE_RAW_ERROR'}))
+        response=SimpleNamespace(returncode=0,stdout=json.dumps(rows))
+        with patch.object(collect_local.subprocess,'run',return_value=response):output,ok=collect_local.pm2_items(self.runtime)
+        self.assertEqual(output[0]['state'],'error');self.assertNotIn('PRIVATE_RAW_ERROR',json.dumps(output))
+    def test_12_lp_worker_rows_merge_and_expire(self):
+        data={'captured_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat(),'items':[{'id':'lp-bncb-bnb','state':'running','name':'UNTRUSTED'}]}
+        (self.runtime/'local_snapshot.json').write_text(json.dumps(data))
+        d=server.Inventory(self.runtime,catalog=[{'id':'lp-bncb-bnb','name':'BNCB/BNB LP区间监控'}]).snapshot()
+        self.assertEqual(d['items'][0]['state'],'unknown');self.assertEqual(d['items'][0]['name'],'BNCB/BNB LP区间监控')
 
 if __name__=='__main__':unittest.main(verbosity=2)

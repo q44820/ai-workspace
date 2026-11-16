@@ -42,6 +42,8 @@ def service_status(scope, unit):
     except (OSError, subprocess.TimeoutExpired):
         return {'state':'unknown','label':'待核验','detail':'未能在时限内读取服务状态'}
 
+LOCAL_IDS = {'binance-alpha','binance-booster','lp-bncb-bnb','lp-price-range','lp-wallet-watchdog'}
+
 class Inventory:
     def __init__(self, runtime, catalog=None):
         self.runtime = Path(runtime)
@@ -60,7 +62,7 @@ class Inventory:
                 if row['id'] in SERVICE_MAP:
                     row.update(service_status(*SERVICE_MAP[row['id']]))
                     row['checked_at'] = utcnow()
-                elif row['id'] in {'binance-alpha','binance-booster','lp-monitor'}:
+                elif row['id'] in LOCAL_IDS:
                     row.update(state='unknown',label='运行状态待核验',detail='代码已在GitHub；尚无可用的精确运行状态，不能认定已停止',checked_at=utcnow())
                 else:
                     row.update(state='manual', label='手动使用／代码归档', detail='代码已在GitHub；未绑定常驻服务，不代表现有服务已停止', checked_at=utcnow())
@@ -77,7 +79,7 @@ class Inventory:
                 allowed = {'schedule','state','label','detail','checked_at'}
                 by_id = {row['id']:row for row in items}
                 for data in local.get('items',[]):
-                    if not isinstance(data,dict) or data.get('id') not in {'binance-alpha','binance-booster'}:
+                    if not isinstance(data,dict) or data.get('id') not in LOCAL_IDS:
                         continue
                     row = by_id.get(data['id'])
                     if row is None:

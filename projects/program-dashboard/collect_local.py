@@ -6,6 +6,7 @@ import json
 import os
 import plistlib
 import shlex
+import shutil
 import subprocess
 
 LAUNCH_NAMES = {
@@ -65,10 +66,50 @@ def launch_items(home):
   items.append(dict(id=PROJECT_IDS[label],name=name,category='本机服务与定时',location='本机',purpose=purpose,schedule=schedule,state=state,label=title,detail=detail,usage='通过原程序/原任务使用；看板不提供启停按钮',checked_at=now()))
  return items,True
 
+PM2_BINDINGS = {
+ 'bncb-lp-range-monitor':('lp-bncb-bnb','bncb_lp_monitor.py','BNCB/BNB LP区间监控','每30分钟'),
+ 'meme-lp-price-monitor':('lp-price-range','meme_lp_price_monitor.py','LP币价区间监控','按运行配置持续检查'),
+ 'lp-wallet-watchdog':('lp-wallet-watchdog','lp_wallet_watchdog.py','LP仓位核对与区间同步','低频轮询，按运行配置'),
+}
+
+def pm2_items(home):
+ # Parse privately; never return pm2 environment, argv, logs or wallet fields.
+ try:
+  executable=shutil.which('pm2') or ('/opt/homebrew/bin/pm2' if Path('/opt/homebrew/bin/pm2').is_file() else str(Path(home)/'.local/bin/pm2'))
+  process_env=dict(os.environ,PATH='/opt/homebrew/bin:/usr/local/bin:'+os.environ.get('PATH','/usr/bin:/bin'))
+  result=subprocess.run([executable,'jlist'],capture_output=True,text=True,timeout=12,env=process_env)
+  if result.returncode:return [],False
+  processes=json.loads(result.stdout)
+  if not isinstance(processes,list):return [],False
+ except (OSError,ValueError,subprocess.TimeoutExpired):return [],False
+ rows=[]
+ for process in processes:
+  binding=PM2_BINDINGS.get(process.get('name'))
+  if not binding:continue
+  ident,script,name,schedule=binding;env=process.get('pm2_env',{})
+  expected=(Path(home)/'clawd/scripts'/script).resolve()
+  if Path(env.get('pm_exec_path','')).resolve()!=expected:continue
+  status=env.get('status');active=status=='online' and bool(process.get('pid'))
+  state='running' if active else 'stopped' if status=='stopped' else 'error' if status=='errored' else 'unknown'
+  label={'running':'运行中','stopped':'已停止','error':'进程异常','unknown':'状态待核验'}[state]
+  detail='已核对进程名、源码入口与进程状态；不代表链上读取或通知送达已验证'
+  if active and ident=='lp-bncb-bnb':
+   try:
+    data=json.loads((Path(home)/'clawd/output/bncb_lp_monitor/state.json').read_text())
+    success=datetime.fromisoformat(data['lastSuccessAt'].replace('Z','+00:00'))
+    age=(datetime.now(timezone.utc)-success).total_seconds()
+    if data.get('error') or age>2400 or age < -60:
+     state='error';label='进程运行／检查异常';detail='进程存在，但上次检查报错或成功数据超过40分钟；不据无提醒判断安全'
+    else:detail='进程运行；最近40分钟内有成功检查记录，未记录本轮错误；未验证通知设备送达'
+   except (OSError,ValueError,KeyError,TypeError):
+    detail='进程运行；最近链上检查结果待核验，不代表区间安全'
+  rows.append(dict(id=ident,name=name,state=state,label=label,detail=detail,schedule=schedule,checked_at=now()))
+ return rows,True
+
 def collect(home=None):
  home=Path(home) if home else Path.home()
- items,ok=launch_items(home)
- return {'captured_at':now(),'items':items,'complete':ok,'scope':'github-projects-only'}
+ items,ok=launch_items(home);workers,workers_ok=pm2_items(home)
+ return {'captured_at':now(),'items':items+workers,'complete':ok and workers_ok,'scope':'github-projects-only'}
 
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--upload-config');args=parser.parse_args()
