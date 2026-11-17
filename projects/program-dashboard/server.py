@@ -122,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # Never log bearer path or request details.
 
-    def response(self, body, status=200, content_type='application/json; charset=utf-8', head=False):
+    def response(self, body, status=200, content_type='application/json; charset=utf-8', head=False, market_connect=False):
         self.send_response(status)
         self.send_header('Content-Type',content_type)
         self.send_header('Content-Length',str(len(body)))
@@ -130,7 +130,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy','no-referrer')
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('X-Frame-Options','DENY')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
+        connect = "'self' https://api.hyperliquid.xyz https://mainnet.zklighter.elliot.ai" if market_connect else "'self'"
+        self.send_header('Content-Security-Policy',f"default-src 'self'; script-src 'self'; style-src 'self'; connect-src {connect}; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
         self.end_headers()
         if not head:
             self.wfile.write(body)
@@ -143,6 +144,16 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts)<4 or parts[1]!='v' or not hmac.compare_digest(hashlib.sha256(parts[2].encode()).hexdigest(), self.server.token_hash):
             return self.response(b'{"error":"not_found"}',404,head=head)
         suffix = '/'.join(parts[3:])
+        if suffix.startswith('anth-paper/'):
+            name = suffix[len('anth-paper/'):]
+            assets = {'':('paper.html','text/html; charset=utf-8'),'paper_engine.js':('paper_engine.js','text/javascript; charset=utf-8'),'paper_app.js':('paper_app.js','text/javascript; charset=utf-8'),'paper.css':('paper.css','text/css; charset=utf-8')}
+            if name not in assets:
+                return self.response(b'{"error":"not_found"}',404,head=head)
+            filename,kind=assets[name]
+            candidate=HERE.parent/'anth-bot'/filename
+            if not candidate.is_file():
+                return self.response(b'{"error":"paper_not_installed"}',503,head=head)
+            return self.response(candidate.read_bytes(),content_type=kind,head=head,market_connect=True)
         if suffix == 'api/status':
             return self.response(json.dumps(self.server.inventory.snapshot(),ensure_ascii=False).encode(),head=head)
         assets = {'':'index.html','app.js':'app.js','style.css':'style.css'}

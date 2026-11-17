@@ -26,7 +26,7 @@ function render(){
   const section=element('section',undefined,'group');section.append(element('h2',name+' · '+rows.length));const grid=element('div',undefined,'grid');
   for(const row of rows){const card=element('article',undefined,'card');const top=element('div',undefined,'card-top');top.append(programTitle(row),element('span',row.label||states[row.state]||'待核验','badge '+row.state));card.append(top,element('div',row.location+(row.schedule?' · '+row.schedule:''),'sub'),element('p',row.purpose,'purpose'),element('p',row.detail||'','detail'));
    if(row.usage){const use=element('div',undefined,'usage');use.append(element('strong','如何使用／更新'),element('p',row.usage));card.append(use);}
-   const bottom=element('div',undefined,'card-bottom');if(row.code&&row.code.startsWith('https://github.com/q44820/ai-workspace/')){const a=element('a','代码与中文说明 ↗');a.href=row.code;a.target='_blank';a.rel='noopener noreferrer';bottom.append(a);}if(row.checked_at)bottom.append(element('span','核验 '+dateText(row.checked_at)));card.append(bottom);grid.append(card);
+   const bottom=element('div',undefined,'card-bottom');if(row.id==='anth-bot'){const paper=element('a','刷交易量模拟工具 ↗');paper.href='anth-paper/';paper.target='_blank';paper.rel='noopener noreferrer';bottom.append(paper);}if(row.code&&row.code.startsWith('https://github.com/q44820/ai-workspace/')){const a=element('a','代码与中文说明 ↗');a.href=row.code;a.target='_blank';a.rel='noopener noreferrer';bottom.append(a);}if(row.checked_at)bottom.append(element('span','核验 '+dateText(row.checked_at)));card.append(bottom);grid.append(card);
   }section.append(grid);$('groups').append(section);
  }
  $('empty').classList.toggle('hidden',filtered.length>0);

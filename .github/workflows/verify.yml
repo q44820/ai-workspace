@@ -29,3 +29,9 @@ jobs:
           node --check projects/arb-hub/static/app.js
           node --check projects/program-dashboard/static/app.js
           node --check projects/lp-monitor/scripts/bncb_lp_snapshot.cjs
+          node --check projects/anth-bot/paper_engine.js
+          node --check projects/anth-bot/paper_app.js
+      - name: ANTH paper execution regression
+        run: |
+          node projects/anth-bot/test_paper_engine.cjs
+          node projects/anth-bot/test_paper_ui.cjs

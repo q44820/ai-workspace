@@ -120,4 +120,27 @@ class DashboardTests(unittest.TestCase):
         d=server.Inventory(self.runtime,catalog=[{'id':'lp-price-range','name':'LP','web_url':'https://not-trusted.example/'}]).snapshot()
         self.assertNotIn('web_url',d['items'][0])
 
+    def test_15_paper_assets_remain_authenticated_and_readonly(self):
+        token='fixture-access-code'
+        http=ThreadingHTTPServer(('127.0.0.1',0),server.Handler)
+        http.token_hash=hashlib.sha256(token.encode()).hexdigest()
+        http.inventory=server.Inventory(self.runtime,catalog=[])
+        thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start()
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}));base='http://127.0.0.1:'+str(http.server_port)
+        try:
+            for name in ['','paper_engine.js','paper_app.js','paper.css']:
+                with opener.open(base+'/v/'+token+'/anth-paper/'+name,timeout=4) as r:
+                    self.assertEqual(r.status,200)
+                    self.assertIn('https://api.hyperliquid.xyz',r.headers['Content-Security-Policy'])
+                    self.assertIn('https://mainnet.zklighter.elliot.ai',r.headers['Content-Security-Policy'])
+            for path in ['/anth-paper/','/v/wrong/anth-paper/','/v/'+token+'/anth-paper/bot.py','/v/'+token+'/anth-paper/.env']:
+                with self.assertRaises(urllib.error.HTTPError) as caught:opener.open(base+path,timeout=4)
+                self.assertEqual(caught.exception.code,404)
+            with opener.open(base+'/v/'+token+'/',timeout=4) as r:
+                self.assertNotIn('hyperliquid',r.headers['Content-Security-Policy'])
+            req=urllib.request.Request(base+'/v/'+token+'/anth-paper/',data=b'{}',method='POST')
+            with self.assertRaises(urllib.error.HTTPError) as caught:opener.open(req,timeout=4)
+            self.assertEqual(caught.exception.code,405)
+        finally:http.shutdown();http.server_close();thread.join()
+
 if __name__=='__main__':unittest.main(verbosity=2)
