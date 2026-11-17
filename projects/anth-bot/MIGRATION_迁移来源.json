@@ -6,7 +6,7 @@
       "source": "bot.py",
       "source_sha256": "6e7c61daa866ce0f5f7e28571f2518fa5826a2ce8b5f1dae3a0813d402fc4494",
       "target": "bot.py",
-      "target_sha256": "b4bc4315a553435404aa780004006c1a5a1a8b17bc851d8b4ffe3b6330591dad"
+      "target_sha256": "26c63002c8261987a98bd17ca768a8ed259bce2b59a2b27f59f911ac5990e234"
     },
     {
       "source": "simtest.py",
@@ -32,5 +32,6 @@
     "production service definitions",
     "historical fills and account tests"
   ],
-  "production_modified": false
+  "production_modified": false,
+  "maintenance_note": "Execution-safety logic synchronized; public archive remains offline-only. Source hashes describe original migration snapshot; target hashes describe maintained public files."
 }
