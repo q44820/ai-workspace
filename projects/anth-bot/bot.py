@@ -553,9 +553,18 @@ class Venues:
         """单次尝试目标持仓；未知订单只允许人工核实，不凭延迟仓位重发。
         任一侧仍需下单却没有可信新鲜盘口时，两腿都不发单（避免单边先平）。不在此函数里发明无报价市价策略。"""
         self.last_drive = dict(submitted=False, ok=False)
-        if reduce and not S.pos:
+        if not S.pos:
             S.recovery = True
+            if not reduce:
+                S.recovery_reduce_allowed = False
+                S.save()
+                return False
             S.save()  # represent orphan exposure before any account read or submission
+        if not reduce and (S.recovery or (S.pos and (
+                S.pos.get("opening_failed") or S.pos.get("close_requested") or S.pos.get("rescue_pending")))):
+            S.alert = "本轮开仓已中止或处于恢复状态，禁止新开腿"
+            S.save()
+            return False
         try:
             pio, plt, _, _ = await read_exposure(self, paced=S.recovery)
         except Exception:
@@ -579,14 +588,19 @@ class Venues:
         needed = [(leg, delta, book) for leg, delta, book, dec in
                   (("io", deltas[0], B.io, HL_SZ_DEC), ("lt", deltas[1], B.lt(), LT_SZ_DEC))
                   if abs(delta) >= 10 ** -dec / 2]
-        if any(not book_tradable(book, now_ms()) for _, _, book in needed):
+        if any(not book_tradable(book, now_ms()) or
+               (not reduce and quantity_vwap(book["asks" if delta > 0 else "bids"], abs(delta)) is None)
+               for _, delta, book in needed):
             S.alert = "Needed leg has no reliable fresh quote; exposure retained"
             S.save()
             return False
         # One submission per leg only. Account snapshots cannot establish order finality.
         for leg, delta, book in needed:
-            if not book_tradable(book, now_ms()):
-                S.alert = "Needed quote expired before order; exposure retained"
+            # Never reuse the pre-first-leg book after a venue round trip.
+            book = B.io if leg == "io" else B.lt()
+            if not book_tradable(book, now_ms()) or (not reduce and
+                    quantity_vwap(book["asks" if delta > 0 else "bids"], abs(delta)) is None):
+                S.alert = "Needed quote expired or lacks size before order; exposure retained"
                 S.save()
                 return False
             intent = dict(id=secrets.token_hex(16), venue=leg, direction="buy" if delta > 0 else "sell",
@@ -614,6 +628,9 @@ class Venues:
                     book["asks" if delta > 0 else "bids"][0][0], S.cfg["slipCapBp"], reduce)
             except BaseException:
                 S.alert = "Order outcome unknown; manual review required"
+                if not reduce and S.pos:
+                    S.pos["opening_failed"] = True
+                S.save()
                 raise
             finally:
                 self._send_intent = None
@@ -640,6 +657,34 @@ class Venues:
                 intent["status"] = "unknown"
                 intent.pop("terminal_evidence", None)
                 raise
+            if not reduce:
+                # Resolve each opening leg independently; acknowledgements and stale
+                # positions cannot authorize a second opening leg. No resend loop.
+                try:
+                    pio, plt, _, _ = await read_exposure(self)
+                    await self.reconcile_orders((pio, plt))
+                except Exception:
+                    if S.pos: S.pos["opening_failed"] = True
+                    S.alert = "开仓结果核对失败，禁止继续开腿或重复下单"
+                    S.save()
+                    return False
+                evidence = intent.get("terminal_evidence", {})
+                dec = HL_SZ_DEC if leg == "io" else LT_SZ_DEC
+                tol = 10 ** -dec / 2
+                before = intent["pre"][leg]
+                actual = pio if leg == "io" else plt
+                full = (intent["status"].startswith("terminal") and
+                        positions_known(pio, plt) and
+                        (DRY_RUN or (evidence.get("state") == "filled" and
+                         positions_known(evidence.get("filled")) and
+                         abs(evidence["filled"] - abs(delta)) <= tol)) and
+                        abs(actual - (before + delta)) <= tol)
+                if not full:
+                    if S.pos: S.pos["opening_failed"] = True
+                    S.alert = "开仓腿未足额确认，已中止后续开腿；仅允许核对及风险减仓"
+                    if not unknown_orders(): S.exit_pending = None
+                    S.save()
+                    return False
         pio, plt, _, _ = await read_exposure(self)
         await self.reconcile_orders((pio, plt))
         ok = positions_known(pio, plt) and (pio == 0 if t_io == 0 else abs(t_io-pio) < 0.0005) and (plt == 0 if t_lt == 0 else abs(t_lt-plt) < 0.000005) and not unknown_orders()
@@ -881,8 +926,13 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
             S.note("sys", f"下单前复核：可成交偏离只剩 {'—' if spr2 is None else f'{entry_dev(dir_, spr2, med):+.1f}'}bp < {S.cfg['openBp']:g}bp，放弃开仓")
             S.pos = None; S.cool = now_ms() + 5000; return
         S.pos["bal0"] = bal0
+        S.pos.update(opening_pending=True, opening_failed=False)
+        S.save()  # crash/restart must never turn an incomplete entry into normal holding
         tr = V.track_start()
         ok = await V.drive_to(si * qty, -si * qty, False, "开仓")
+        if not ok:
+            S.pos["opening_failed"] = True
+            S.save()
         pi, pl, ei, el = await read_exposure()
         fl = await V.fills(tr, si * qty, -si * qty)
         if not ok and unknown_orders():
@@ -895,6 +945,7 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
             S.alert = "Opening orders pending terminal/exposure reconciliation"
             S.save(); return
         if not ok:
+            S.mode = "stopped"
             S.note("err", f"开仓两腿不匹配(io={pi}, Lighter={pl})，全部平掉")
             tr2 = V.track_start()
             flat = await V.drive_to(0, 0, True, "残腿全平")
@@ -907,9 +958,13 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
                 S.trades.append(dict(t=t, dir=dir_, hold=now_ms() - t, inS=None, outS=None, sigS=spr, bp=None, u=None, uBal=ub,
                                      fees=None, reason="开仓单腿失败·全平",
                                      vol=0, live=True, real=False, status="unreconciled", note="余额变化不能归因于实际收益"))
-            if flat and not unknown_orders(): S.pos = None
+            if flat and not unknown_orders():
+                S.pos = None
+                S.exit_pending = None
+                S.alert = "开仓未完成，双边已核实归零；策略保持停止，待人工确认"
             S.cool = now_ms() + S.cfg["cooldownSec"] * 1000; S.save(); return
         S.pos.pop("opening_pending", None)
+        S.pos.pop("opening_failed", None)
         fio_, flt_ = fl["io"], fl["lt"]
         S.pos["entryPxIoActual"] = fio_.get("px") if valid_price(fio_.get("px")) else (ei if valid_price(ei) else None)
         S.pos["entryPxLtActual"] = flt_.get("px") if valid_price(flt_.get("px")) else (el if valid_price(el) else None)
@@ -1086,6 +1141,11 @@ def _finalize_flat(rec, t):
                       + (f" ｜ 盘口估算 {uEst:+.4f}U" if uEst is not None else "")
                       + (f" ｜ 手续费 {fees:.4f}U" if fees is not None else ""))
     S.pos = None; S.exit_pending = None
+    if S.mode == "stopped" and S.alert and (
+            "平仓未完成" in S.alert or "残腿未能全平" in S.alert or
+            "Unknown account/order" in S.alert or "Order outcome unknown" in S.alert or
+            "Opening orders pending" in S.alert):
+        S.alert = "双边持仓已核实归零；策略保持停止，待人工确认"
     S.cool = now_ms() + S.cfg["cooldownSec"] * 1000; S.save()
 
 async def reconcile_exit(t):
@@ -1113,8 +1173,11 @@ async def reconcile_exit(t):
                 p["close_requested"] = p.get("close_requested") or "平仓对账"
             if opening:
                 si = 1 if p["dir"] == "L" else -1
-                p["rescue_pending"] = not (same_size(abs(pio), p["qIo"]) and
+                p["rescue_pending"] = bool(p.get("opening_failed")) or not (same_size(abs(pio), p["qIo"]) and
                     same_size(abs(plt), p["qLt"]) and pio * si > 0 and plt * si < 0)
+                if p["rescue_pending"]:
+                    p["close_requested"] = "残腿全平"
+                    S.mode = "stopped"
                 p["entryAccountingUnknown"] = True
                 p["entryFeesKnown"] = False
                 p["qIo"], p["qLt"] = abs(pio), abs(plt)
@@ -1575,7 +1638,7 @@ async def main():
     try: await backfill()
     except Exception as e: log.warning("回填失败: %s", e)
     log.info("Lighter=%s market=%d 杠杆=%dx", LT_URL, MID, LEVERAGE)
-    if LIVE_ENABLED or S.mode == "live" or (S.pos and S.pos.get("live")): await V.init()   # 启动时设杠杆（DRY_RUN 只记录）
+    if S.mode == "live" or (S.pos and S.pos.get("live")): await V.init()   # stopped restarts must not change leverage or initialize signing clients
     app = web.Application(); app.add_routes([web.get("/", h_index), web.get("/api/state", h_state), web.post("/api/cfg", h_cfg),
                                              web.post("/api/mode", h_mode), web.post("/api/kill", h_kill), web.post("/api/clear", h_clear)])
     run = web.AppRunner(app); await run.setup(); await web.TCPSite(run, BIND, PORT).start()
