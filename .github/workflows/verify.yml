@@ -35,3 +35,4 @@ jobs:
         run: |
           node projects/anth-bot/test_paper_engine.cjs
           node projects/anth-bot/test_paper_ui.cjs
+          node projects/anth-bot/test_volume_profit.cjs
