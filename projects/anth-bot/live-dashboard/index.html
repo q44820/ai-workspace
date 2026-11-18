@@ -34,10 +34,11 @@ th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}
 </head>
 <body><div class="wrap">
 <h1>ANTH 跨所价差回归 · 实盘看板</h1>
-<div class="sub">Entropy io:ANTH × Lighter 主站 ANTHROPIC ｜ 价差 = io / Lighter − 1 ｜ 只读，不能下单或改参数 ｜ 每 2.5 秒自动刷新</div>
+<div class="sub">Entropy io:ANTH × Lighter 主站 ANTHROPIC ｜ 价差 = io / Lighter − 1 ｜ 只读，不能下单或改参数 ｜ 每10秒读取，服务器约30秒推送；超过90秒标为状态未知</div>
 <div class="card" style="margin-top:12px"><a id="volume-version-link" href="/anth-paper/paper.html#volume" style="display:inline-block;padding:10px 16px;background:#238636;color:white;border-radius:7px;text-decoration:none;font-weight:700">刷交易量版本</a><div class="sub" style="margin-top:6px">独立模拟参数：成交额目标、亏损预算、费率、持仓及冷却；不下真实订单，不改变此页实盘策略。</div></div>
 <div id="banner" class="banner">正在连接看板…</div>
 <div id="alert"></div>
+<div id="statusHistory" class="sub"></div>
 
 <div class="grid g4">
   <div class="card"><div class="k">运行状态</div><div class="v" id="mode">—</div><div class="s" id="modeS">—</div></div>
@@ -87,28 +88,32 @@ const DIR={L:"买io / 卖Lighter",S:"卖io / 买Lighter"};
 let chart, lastOk=0;
 
 function modeText(d){
-  if(d.mode==="live") return d.dryRun?"实盘逻辑（不发单）":"实盘";
+  if(d.mode==="live") return d.dryRun?"实盘逻辑（不发单）":d.liveEnabled&&d.venuesReady&&!d.stale?"实盘运行中":"实盘模式 · 暂停执行";
   if(d.mode==="paper") return "模拟";
   if(d.mode==="stopped") return "已停止";
   return d.mode||"—";
 }
 function draw(d){
-  const stale = !d || d.ok===false;
+  const ageMs=d&&Number.isFinite(d.ts)?Date.now()-d.ts:Infinity;
+  const stale = !d || d.ok===false || ageMs>90000 || ageMs < -10000;
   if(stale){
     $("banner").style.background="#3d1214"; $("banner").style.border="1px solid #f85149";
-    $("banner").textContent="连不上看板数据："+(d&&d.err?d.err:"请稍后刷新");
+    $("banner").textContent=d&&d.ok!==false?"⚠️ 数据已过期或时间无效，当前运行状态未知；请勿据旧快照判断停止或运行。最后快照："+(Number.isFinite(d.ts)?bj(d.ts):"未知"):"⚠️ 看板连接中断，当前运行状态未知："+(d&&d.err?d.err:"请稍后刷新");
+    $("mode").textContent="状态未知";$("mode").className="v yel";$("modeS").textContent="无法确认当前服务状态，旧数据仅供历史参考";$("dIo").className="dot off";$("dLt").className="dot off";$("statusHistory").textContent="";$("alert").textContent="";
     return;
   }
   lastOk=Date.now();
-  const live=d.mode==="live"&&!d.dryRun;
+  const live=d.mode==="live"&&!d.dryRun&&d.liveEnabled&&d.venuesReady&&!d.stale;
   $("banner").style.border="1px solid "+(live?"#8e1519":d.mode==="paper"?"#1b4332":"#30363d");
   $("banner").style.background=live?"#3d1214":d.mode==="paper"?"#0f2a1a":"#21262d";
   const age=d.ts?Math.max(0,Math.round((Date.now()-d.ts)/1000)):null;
-  const lag=(age!=null&&age>4*3600)?" ⚠️ 超过 "+Math.round(age/3600)+" 小时没收到机器人心跳":"";
-  $("banner").textContent=(live?"🔴 实盘运行中：机器人正在用真实资金自动下单":d.mode==="paper"?"🟢 模拟盘：只记账，不下单":d.dryRun?"🟡 实盘逻辑（DRY_RUN，不发真实订单）":"⏸ 已停止：不开新仓")
-    +" ｜ 信号："+(d.signal||"—")+" ｜ 快照时间 "+(d.ts?bj(d.ts):"—")+"（仅在开/平仓、状态变化时更新，另每 3 小时心跳；价格/价差为快照值）"+lag;
+  $("banner").textContent=(live?"🔴 实盘运行中：允许按策略使用真实资金；当前是否成交以订单记录为准":d.mode==="paper"?"🟢 模拟盘：只记账，不下单":d.dryRun?"🟡 实盘逻辑（DRY_RUN，不发真实订单）":d.mode==="live"?"⚠️ 实盘模式 · 暂停执行：检查行情、客户端或实盘开关":"⏸ 已停止：不开新仓")
+    +" ｜ 信号："+(d.signal||"—")+" ｜ 快照 "+bj(d.ts)+"（"+age+"秒前；服务器约30秒推送）";
   const alerts=[];
-  if(d.alert) alerts.push(d.alert);
+  const legacy="双边持仓已核实归零；执行安全修复已部署，策略保持停止，待人工确认";
+  const history=live&&!d.recoveryExposure&&!d.exit_pending&&d.alert===legacy;
+  $("statusHistory").textContent=d.statusNotice|| (history?"历史提示已解除：此前安全修复后等待确认；当前状态以实时运行栏为准。":"");
+  if(d.alert&&!history) alerts.push(d.alert);
   if(d.mode==="stopped") alerts.push("机器人已停止");
   if(d.stale) alerts.push("行情数据中断");
   if(d.keys&&(d.keys.io==="FAIL"||d.keys.lt==="FAIL")) alerts.push("密钥自检失败（"+["io="+d.keys.io,"Lighter="+d.keys.lt].join("，")+"）");
@@ -186,14 +191,15 @@ chart=new Chart($("ch"),{type:"line",data:{datasets:[
 
 async function loop(){
   try{
-    const r=await fetch("/api/status");
+    const r=await fetch("/api/status",{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!r.ok)throw Error("状态接口暂不可用");
     const d=await r.json();
     draw(d);
   }catch(e){
-    if(Date.now()-lastOk>180000) draw({ok:false,err:e.message||"网络错误"});
+    draw({ok:false,err:"网络连接或状态读取失败"});
   }
 }
-setInterval(()=>{if(!document.hidden)loop();},60000);loop();
+setInterval(()=>{if(!document.hidden)loop();},10000);loop();
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)loop();});
 </script>
 </body></html>

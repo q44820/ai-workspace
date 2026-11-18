@@ -1,7 +1,6 @@
 import { put } from "@vercel/blob";
 
-// 机器人只在开/平仓、状态变化时推送，另每 3 小时心跳。
-// 额外保险：同一实例内，若交易/持仓没变化，60 秒内的重复推送直接丢弃，不写 Blob。
+// 独立只读发布器约30秒推送。相同安全状态20秒内合并，不阻挡正常心跳。
 let lastWrite = 0;
 let lastKey = "";
 
@@ -24,9 +23,9 @@ export default async function handler(req, res) {
   }
   const p = data.position || {};
   const lt = (data.trades || []).slice(-1)[0] || {};
-  const key = [data.mode, (data.trades || []).length, lt.t || "", data.position ? 1 : 0, p.t || "", p.dir || ""].join("|");
+  const key = JSON.stringify([data.mode, data.dryRun, data.liveEnabled, data.venuesReady, data.stale, data.alert, data.recoveryExposure, data.exit_pending, (data.trades || []).length, lt.t || "", data.position ? 1 : 0, p.t || "", p.dir || ""]);
   const now = Date.now();
-  if (key === lastKey && now - lastWrite < 60_000) return res.status(200).json({ ok: true, skipped: true });
+  if (key === lastKey && now - lastWrite < 20_000) return res.status(200).json({ ok: true, skipped: true });
   data.ingestedAt = now;
   try {
     await put("anth-live-status.json", JSON.stringify(data), {

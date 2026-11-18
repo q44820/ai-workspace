@@ -1,0 +1,20 @@
+[Unit]
+Description=ANTH readonly dashboard status publisher (no trading controls)
+After=network-online.target anth-bot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/anth-status-publisher/publish_status.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+ReadOnlyPaths=/opt/anth-bot
+
+[Install]
+WantedBy=multi-user.target
