@@ -132,7 +132,7 @@ class Controller:
   except BaseException:
    await v.close();raise
   return v
- async def start(self,d,resume=False,reset_stop=True):
+ async def start(self,d,resume=False,reset_stop=True,single_round=False):
   async with self.mutex:
    if self.running:raise Blocked('已有会话运行，禁止重复启动')
    if resume:
@@ -153,7 +153,7 @@ class Controller:
     if self.venue is not None:
      await self.venue.close();self.venue=None
     self.diagnose(e,'preflight');self.state['phase']='rejected';self.state['message']='启动预检未通过；未发送订单。'+self.failure_label();self.persist();raise
-   self.stop.clear();self.running=True;self.state.update(phase='warmup',resumeReady=False,message='用户手动继续原会话；保留累计成交及亏损预算，60秒预热' if resume else '已由用户手动启动；60秒真实行情预热')
+   self.stop.clear();self.running=True;self.state.update(phase='warmup',resumeReady=False,singleRound=single_round,roundsOpened=0,message='用户授权单轮验收；保留原预算，平仓后停止新增' if single_round else '用户手动继续原会话；保留累计成交及亏损预算，60秒预热' if resume else '已由用户手动启动；60秒真实行情预热')
    if not resume:self.state.update(session=secrets.token_hex(12),started=time.time())
    self.persist();self.task=asyncio.create_task(self.run());return self.public()
  async def request_stop(self):
@@ -236,7 +236,9 @@ class Controller:
     ratio=(p['qty']-filled)/p['qty'];self.position={**p,'qty':p['qty']-filled,'fees':p['fees']*ratio}
    else:self.position=None
    self.state['lastClose']=time.time()
-  else:self.position.update(lt=lt,fees=self.position['fees']+sum(x['fee'] for x in ls),unhedged=False)
+  else:
+   self.position.update(lt=lt,fees=self.position['fees']+sum(x['fee'] for x in ls),unhedged=False)
+   self.state['roundsOpened']=self.state.get('roundsOpened',0)+1
   await self.verify();self.persist();return True
  async def emergency_reduce(self):
   # Only this session's confirmed residuals; never touch ambiguous/shared inventory.
@@ -256,6 +258,7 @@ class Controller:
    while True:
     b=await self.refresh();samples+=1
     reason=stop_reason(self.config,self.ledger.total,self.state['riskEquity'])
+    if not reason and self.state.get('singleRound') and self.state.get('roundsOpened',0)>=1:reason='用户授权的单轮验收收尾'
     draining=draining or bool(reason) or self.stop.is_set()
     if draining:self.state.update(phase='draining',message='停止新开仓并收尾：'+str(reason or 'user'))
     p=self.position

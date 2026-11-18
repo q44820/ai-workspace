@@ -7,6 +7,10 @@ from unittest.mock import patch
 import adapter,core
 class FullLifecycle(unittest.IsolatedAsyncioTestCase):
  async def test_api_multiround_receipt_lag_target_and_flat_restart(self):
+  await self.exercise(False)
+ async def test_authorized_single_round_preserves_target_and_cannot_open_second_round(self):
+  await self.exercise(True)
+ async def exercise(self,single_round):
   from aiohttp.test_utils import TestClient,TestServer
   spec=importlib.util.spec_from_file_location('full_api',Path(__file__).with_name('server.py'));assert spec is not None and spec.loader is not None;api=importlib.util.module_from_spec(spec);spec.loader.exec_module(api)
   real_sleep=asyncio.sleep;clock=[time.time()];records=[]
@@ -35,13 +39,19 @@ class FullLifecycle(unittest.IsolatedAsyncioTestCase):
    state=Path(t)/'state.json';client=TestClient(TestServer(api.create_app(state,'x'*40,lambda:v)));await client.start_server();h={'Authorization':'Bearer '+'x'*40}
    try:
     d=await (await client.get('/state',headers=h)).json();h['X-Turnover-CSRF']=d['csrf']
-    r=await client.post('/start',headers=h,json=dict(confirm='用户手动启动本次真实合约小额试验',config=dict(target=100,round_cap=50,loss=3)));self.assertEqual(r.status,202)
+    body=dict(confirm='用户手动启动本次真实合约小额试验',config=dict(target=100,round_cap=50,loss=3))
+    if single_round:body['singleRound']=True
+    r=await client.post('/start',headers=h,json=body);self.assertEqual(r.status,202)
     seen=[]
     for _ in range(1500):
      d=await (await client.get('/state',headers=h)).json();seen.append(d['phase'])
      if not d['running'] and not d['startPending'] and d['phase'] in {'finished','needs_review','rejected'}:break
      await real_sleep(.002)
-    self.assertEqual(d['phase'],'finished',str(d));self.assertGreaterEqual(d['volume']['both'],100);self.assertEqual(d['orders'][-1]['outcome'],'terminal');self.assertGreaterEqual(len(records),8);self.assertTrue(any(x['reduce'] for x in records));self.assertEqual(await v.exposure(),{'io':0.,'lt':0.});self.assertTrue(all(vv>=3 for k,vv in v.reads.items() if v.orders[k]['venue']=='lt'));self.assertIsNone(d['position']);self.assertTrue(all(x['outcome']=='terminal' for x in d['orders']));self.assertEqual(len(records),len(set(x['client'] for x in records)))
+    self.assertEqual(d['phase'],'finished',str(d))
+    if single_round:
+     self.assertEqual(len(records),4);self.assertLess(d['volume']['both'],100);self.assertEqual(d['config']['target'],100);self.assertTrue(d['singleRound']);self.assertEqual(d['roundsOpened'],1)
+    else:self.assertGreaterEqual(d['volume']['both'],100);self.assertGreaterEqual(len(records),8)
+    self.assertEqual(d['orders'][-1]['outcome'],'terminal');self.assertTrue(any(x['reduce'] for x in records));self.assertEqual(await v.exposure(),{'io':0.,'lt':0.});self.assertTrue(all(vv>=3 for k,vv in v.reads.items() if v.orders[k]['venue']=='lt'));self.assertIsNone(d['position']);self.assertTrue(all(x['outcome']=='terminal' for x in d['orders']));self.assertEqual(len(records),len(set(x['client'] for x in records)))
     reopened=core.Controller(state,lambda:None);self.assertFalse(reopened.running);self.assertEqual(reopened.ledger.total,d['volume']['both']);self.assertEqual(reopened.state['session'],d['session'])
    finally:await client.close()
 if __name__=='__main__':unittest.main()
