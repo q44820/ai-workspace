@@ -129,6 +129,16 @@ class PairedFlow(unittest.IsolatedAsyncioTestCase):
   from unittest.mock import AsyncMock
   self.c.ledger.add(dict(venue='io',id='fixture-lag',side=1,qty=.01,price=1700,fee=.001,pnl=0))
   self.v.exposure=AsyncMock(side_effect=[{'io':0,'lt':0},{'io':.01,'lt':0}]);await self.c.verify();self.assertEqual(self.v.exposure.await_count,2);self.assertEqual(self.v.sent,[])
+ async def test_exception_records_sanitized_origin(self):
+  self.c.running=True
+  async def broken():raise RuntimeError('SECRET fixture payload')
+  self.c.venue.book=broken;await self.c.run()
+  error=self.c.state.get('lastError',{});self.assertEqual(error.get('type'),'RuntimeError');self.assertEqual(error.get('stage'),'market')
+  self.assertNotIn('SECRET',json.dumps(self.c.public()));self.assertTrue(error.get('frames'))
+ async def test_transient_read_failure_does_not_freeze_flat_session(self):
+  from unittest.mock import AsyncMock
+  b=await self.v.book();self.v.book=AsyncMock(side_effect=[TimeoutError('fixture'),b]);self.c.running=True;self.c.state['lastFunding']=time.time();await self.c.refresh()
+  self.assertEqual(self.v.book.await_count,2);self.assertFalse(self.c.state['phase']=='needs_review');self.assertEqual(self.v.sent,[])
  async def test_restart_unknown_cannot_clear_gate(self):
   self.c.state.update(session=None,phase='needs_review',journal=[])
   with self.assertRaises(core.Blocked):await self.c.start({})

@@ -85,14 +85,14 @@ class Venue:
   if not all(number(x) and x>=self.min_free for x in [io_free,lt_free]):raise Blocked('两所可用余额不足本次每腿名义额加费用余量')
   if await self.funding(time.time()) is None:raise Blocked('资金费账单接口未核实')
  async def funding(self,since):
-  try:
-   io,lt=await asyncio.gather(self.post({'type':'userFunding','user':self.address,'startTime':int(since*1000)}),self.accounts.position_funding(account_index=self.index,limit=100,authorization=self.auth(),market_ids=[MID],start_timestamp=int(since*1000),_request_timeout=5.0))
-   d=lt.to_dict()
-   if not isinstance(io,list) or len(io)>=500 or d.get('code')!=200 or not isinstance(d.get('position_fundings'),list) or d.get('next_cursor'):return None
-   n=sum(float(x['delta']['usdc']) for x in io if x['delta']['coin']==COIN)
-   n+=sum(float(x['change']) for x in d['position_fundings'] if x['market_id']==MID and x['timestamp']*1000>=since*1000)
-   return n if number(n) else None
-  except Exception:return None
+  # SDK 1.1.8 uses plural market_ids/start_timestamp (milliseconds).
+  # Do not swallow exceptions: controller retries transient READS and records sanitized origin.
+  io,lt=await asyncio.gather(self.post({'type':'userFunding','user':self.address,'startTime':int(since*1000)}),self.accounts.position_funding(account_index=self.index,limit=100,authorization=self.auth(),market_ids=[MID],start_timestamp=int(since*1000),_request_timeout=5.0))
+  d=lt.to_dict()
+  if not isinstance(io,list) or len(io)>=500 or d.get('code')!=200 or not isinstance(d.get('position_fundings'),list) or d.get('next_cursor'):return None
+  n=sum(float(x['delta']['usdc']) for x in io if x['delta']['coin']==COIN)
+  n+=sum(float(x['change']) for x in d['position_fundings'] if x['market_id']==MID and x['timestamp']*1000>=since*1000)
+  return n if number(n) else None
  async def submit(self,i,maker=False):
   buy=i['side']==1
   if i['venue']=='io':

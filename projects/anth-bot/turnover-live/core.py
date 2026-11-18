@@ -134,8 +134,8 @@ class Controller:
     self.venue=await self.preflight()
     if self.stop.is_set():
      await self.venue.close();self.venue=None;raise Blocked('预检期间用户已请求停止，未启动交易')
-   except BaseException:
-    self.state['phase']='rejected';self.state['message']='启动预检未通过；未发送订单';self.persist();raise
+   except BaseException as e:
+    self.diagnose(e,'preflight');self.state['phase']='rejected';self.state['message']='启动预检未通过；未发送订单。'+self.failure_label();self.persist();raise
    self.stop.clear();self.running=True;self.state.update(phase='warmup',session=secrets.token_hex(12),started=time.time(),message='已由用户手动启动；60秒真实行情预热');self.persist();self.task=asyncio.create_task(self.run());return self.public()
  async def request_stop(self):
   self.stop.set();self.state['message']='用户停止：撤本程序挂单并收尾自己的仓位，不清除历史';self.persist();return self.public()
@@ -146,24 +146,45 @@ class Controller:
   i=dict(venue=leg,side=side,qty=qty,price=price,purpose=purpose,reduce=purpose!='open',client=secrets.token_hex(16) if leg=='io' else secrets.randbelow(2**47-1)+1,outcome='unknown',created=time.time())
   self.state['journal'].append(i);self.persist() # WAL before submission; crashes retain ambiguous intent
   try:
-   ack=await self.venue.submit(i,maker=maker)
-   result=await self.venue.settle(i,ack,self.stop)
+   self.stage=leg+'-submit';ack=await self.venue.submit(i,maker=maker)
+   self.stage=leg+'-settle';result=await self.venue.settle(i,ack,self.stop)
    if not result.get('terminal'):raise Blocked('订单终态未确认')
    for f in result['fills']:self.ledger.add(f)
    i['outcome']='terminal';i['filled']=sum(f['qty'] for f in result['fills']);self.persist();return result['fills']
   except BaseException:
-   self.state.update(phase='needs_review',message='订单结果或费用未知；禁止自动重发，需交易所核实');self.persist();raise Blocked('订单提交/核验未知；不得重发') from None
+   i['outcome']='unknown';self.diagnose(__import__('sys').exc_info()[1],leg+'-order');self.state.update(phase='needs_review',message='订单结果或费用未知；禁止自动重发，需交易所核实');self.persist();raise Blocked('订单提交/核验未知；不得重发') from None
  async def verify(self):
   # Account replicas may lag confirmed trade IDs. Retry READS only, never resubmit.
   for attempt in range(4):
-   p=await self.venue.exposure()
+   p=await self.read('positions',self.venue.exposure)
    if all(number(p.get(k)) and abs(p[k]-self.ledger.qty(k))<=1e-8 for k in ['io','lt']):return p
    if attempt<3:await asyncio.sleep(.25)
   raise Blocked('实际仓位与本程序成交账不一致；可能有外部交易，冻结，禁止误平')
+ def diagnose(self,ex,stage=None):
+  import traceback
+  self.state['lastError']={'at':time.time(),'type':type(ex).__name__,'stage':stage or getattr(self,'stage','unknown'),'status':getattr(ex,'status',None),'frames':[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(ex.__traceback__)[-6:]]}
+ def failure_label(self):
+  e=self.state.get('lastError',{});return '查询/执行异常：'+str(e.get('stage','unknown'))+' / '+str(e.get('type','unknown'))+((' / HTTP '+str(e['status'])) if e.get('status') else '')
+ async def read(self,stage,fn):
+  import aiohttp
+  self.stage=stage
+  for attempt in range(3):
+   try:return await fn()
+   except Exception as ex:
+    self.diagnose(ex,stage)
+    # SDK read errors carry status too; retry only transport/429/5xx, not schema/auth.
+    status=getattr(ex,'status',None)
+    transient=isinstance(ex,(TimeoutError,ConnectionError,aiohttp.ClientConnectionError)) or status in {408,429,500,502,503,504}
+    if attempt==2 or not transient:raise
+    await asyncio.sleep(.5*(attempt+1))
+  raise Blocked('只读查询重试次数耗尽')
  async def refresh(self):
   if other_service_active():raise Blocked('原套利服务运行/未知，账户隔离失效；冻结，不自动停止原服务或平共享仓')
-  b=await self.venue.book();self.market={'at':b['at'],'ioBid':b['io']['bids'][0][0],'ioAsk':b['io']['asks'][0][0],'ltBid':b['lt']['bids'][0][0],'ltAsk':b['lt']['asks'][0][0]}
-  await self.verify();self.funding=await self.venue.funding(self.state['started']);unreal=0
+  b=await self.read('market',self.venue.book);self.market={'at':b['at'],'ioBid':b['io']['bids'][0][0],'ioAsk':b['io']['asks'][0][0],'ltBid':b['lt']['bids'][0][0],'ltAsk':b['lt']['asks'][0][0]}
+  await self.verify();self.stage='funding'
+  if self.funding is None or time.time()-self.state.get('lastFunding',0)>=30:
+   self.funding=await self.read('funding',lambda:self.venue.funding(self.state['started']));self.state['lastFunding']=time.time()
+  unreal=0
   if self.position:
    p=self.position;sgn=1 if p['dir']=='S' else -1
    io=vwap(b['io']['asks' if sgn==1 else 'bids'],p['qty']);lt=vwap(b['lt']['bids' if sgn==1 else 'asks'],p['qty']);unreal=p['qty']*sgn*(p['io']-io+lt-p['lt'])-p['qty']*(io*.0003+lt*.00028)
@@ -234,10 +255,13 @@ class Controller:
     self.persist();await asyncio.sleep(1)
   except BaseException as e:
    # Never erase ambiguous orders or inventory, never auto-resume after process restart.
+   if not (self.state.get('lastError',{}).get('stage','').endswith('-order') and any(i['outcome']=='unknown' for i in self.state['journal'])):self.diagnose(e)
+   reason=str(e) if isinstance(e,Blocked) else self.failure_label()
    cleaned=False
    try:cleaned=await self.emergency_reduce()
-   except Exception:pass
-   self.state.update(phase='finished-error' if cleaned else 'needs_review',message=('异常后确认仓位已归零；本会话结束。' if cleaned else '异常冻结；仍需核对挂单/敞口。')+(str(e) if isinstance(e,Blocked) else '接口异常'))
+   except Exception as cleanup_error:
+    original=self.state.get('lastError');self.diagnose(cleanup_error,'cleanup');self.state['cleanupError']=self.state['lastError'];self.state['lastError']=original
+   self.state.update(phase='finished-error' if cleaned else 'needs_review',message=('异常后确认仓位已归零；本会话结束。' if cleaned else '异常冻结；仍需核对挂单/敞口。')+reason)
   finally:
    self.running=False;self.persist()
    if self.venue:await self.venue.close()

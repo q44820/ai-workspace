@@ -24,8 +24,8 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
  async def test_unverified_funding_is_not_zero(self):
   v=adapter.Venue();v.post=AsyncMock(side_effect=OSError('fixture'))
   class A:position_funding=AsyncMock(side_effect=OSError('fixture'))
-  v.accounts=A();v.auth=lambda:'fixture';v.index=7
-  self.assertIsNone(await v.funding(1))
+  v.accounts=A();v.auth=lambda:'fixture';v.index=7;v.address='fixture'
+  with self.assertRaises(OSError):await v.funding(1)
 
  async def test_funding_response_seconds_vs_query_milliseconds(self):
   class D:
@@ -33,5 +33,20 @@ class Adapter(unittest.IsolatedAsyncioTestCase):
   class A:position_funding=AsyncMock(return_value=D())
   v=adapter.Venue();v.accounts=A();v.index=7;v.address='fixture';v.auth=lambda:'fixture';v.post=AsyncMock(return_value=[{'delta':{'coin':'io:ANTH','usdc':'.01'}}])
   self.assertAlmostEqual(await v.funding(1700000000),-.01)
+
+ async def test_funding_uses_installed_sdk_signature(self):
+  class D:
+   def to_dict(self):return {'code':200,'position_fundings':[],'next_cursor':''}
+  class A:
+   async def position_funding(self,account_index,limit,authorization=None,cursor=None,side=None,start_timestamp=None,end_timestamp=None,market_ids=None,_request_timeout=None):
+    assert market_ids==[193] and start_timestamp==1700000000000
+    return D()
+  v=adapter.Venue();v.accounts=A();v.index=7;v.address='fixture';v.auth=lambda:'fixture';v.post=AsyncMock(return_value=[])
+  self.assertEqual(await v.funding(1700000000),0)
+
+ async def test_funding_transient_error_is_not_silently_converted_to_none(self):
+  class A:position_funding=AsyncMock(side_effect=TimeoutError('fixture'))
+  v=adapter.Venue();v.accounts=A();v.index=7;v.address='fixture';v.auth=lambda:'fixture';v.post=AsyncMock(return_value=[])
+  with self.assertRaises(TimeoutError):await v.funding(1700000000)
 
 if __name__=='__main__':unittest.main()
