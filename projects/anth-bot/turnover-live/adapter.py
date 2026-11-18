@@ -8,8 +8,18 @@ import aiohttp
 from core import Blocked,number
 COIN='io:ANTH';MID=193;HL='https://api.hyperliquid.xyz/info';LT='https://mainnet.zklighter.elliot.ai'
 
+def hl_price(price,sz_dec,buy,maker):
+ d=Decimal(str(price))
+ if not d.is_finite() or d<=0:raise Blocked('Hyperliquid价格无效')
+ # <=5 significant figures AND <=6-szDecimals decimals; integer always valid.
+ decimals=max(0,min(6-sz_dec,4-d.adjusted()))
+ mode=ROUND_FLOOR if (buy and maker) or (not buy and not maker) else ROUND_CEILING
+ p=d.quantize(Decimal(1).scaleb(-decimals),rounding=mode)
+ if p<=0:raise Blocked('Hyperliquid价格小于最小价格单位')
+ return float(p)
+
 class Venue:
- def __init__(self):self.http=None;self.hl=None;self.lt=None;self.io_dec=3;self.lt_dec=5;self.price_dec=1;self.min_free=26
+ def __init__(self):self.http=None;self.hl=None;self.lt=None;self.key_index=None;self.io_dec=3;self.lt_dec=5;self.price_dec=1;self.min_free=26
  async def initialize(self):
   # This method is never invoked by page view, status, deployment or server startup.
   from eth_account import Account
@@ -20,12 +30,15 @@ class Venue:
   if any(not os.environ.get(k) for k in names):raise Blocked('服务端缺少现有账户授权；网页不接收密钥')
   self.address=os.environ['HL_ACCOUNT_ADDRESS'];self.index=int(os.environ['LIGHTER_ACCOUNT_INDEX'])
   self.hl=await asyncio.to_thread(Exchange,Account.from_key(os.environ['HL_API_PRIVATE_KEY']),MAINNET_API_URL,account_address=self.address,perp_dexs=['','io'],timeout=5)
-  self.lt=lighter.SignerClient(url=LT,account_index=self.index,api_private_keys={int(os.environ['LIGHTER_API_KEY_INDEX']):os.environ['LIGHTER_API_PRIVATE_KEY']})
+  self.key_index=int(os.environ['LIGHTER_API_KEY_INDEX'])
+  if not 0<=self.key_index<255:raise Blocked('Lighter API索引不在有效范围')
+  self.lt=lighter.SignerClient(url=LT,account_index=self.index,api_private_keys={self.key_index:os.environ['LIGHTER_API_PRIVATE_KEY']})
   self.accounts=lighter.AccountApi(self.lt.api_client)
   self.http=aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
   # Deliberately no check_client/update_leverage/create_order here.
  def auth(self):
-  token,err=self.lt.create_auth_token_with_expiry()
+  if self.key_index is None:raise Blocked('Lighter认证索引未初始化')
+  token,err=self.lt.create_auth_token_with_expiry(deadline=600,api_key_index=self.key_index)
   if err or not token:raise Blocked('Lighter只读认证失败')
   return token
  async def close(self):
@@ -98,7 +111,7 @@ class Venue:
   if i['venue']=='io':
    from hyperliquid.utils.types import Cloid
    price=i['price'] if maker else i['price']*(1.003 if buy else .997)
-   price=float(f'{price:.5g}')
+   price=hl_price(price,self.io_dec,buy,maker)
    r=await asyncio.wait_for(asyncio.to_thread(self.hl.order,COIN,buy,i['qty'],price,{'limit':{'tif':'Alo' if maker else 'Ioc'}},i['reduce'],cloid=Cloid.from_str('0x'+i['client'])),7)
    if r.get('status')!='ok':raise Blocked('IO提交结果无法确认')
    rows=r['response']['data']['statuses']
@@ -110,7 +123,9 @@ class Venue:
    raise Blocked('IO未获得订单标识')
   scale=10**self.price_dec;p=i['price']*(1.003 if buy else .997)
   pint=int((Decimal(str(p))*scale).to_integral_value(rounding=ROUND_CEILING if buy else ROUND_FLOOR))
-  _,resp,err=await asyncio.wait_for(self.lt.create_market_order(market_index=MID,client_order_index=i['client'],base_amount=int(round(i['qty']*10**self.lt_dec)),avg_execution_price=pint,is_ask=not buy,reduce_only=i['reduce']),7)
+  amount=Decimal(str(i['qty']))*(10**self.lt_dec)
+  if amount<=0 or amount!=amount.to_integral_value():raise Blocked('Lighter数量不能精确表示；禁止静默舍入对冲量')
+  _,resp,err=await asyncio.wait_for(self.lt.create_market_order(market_index=MID,client_order_index=i['client'],base_amount=int(amount),avg_execution_price=pint,is_ask=not buy,reduce_only=i['reduce']),7)
   if err or resp is None or getattr(resp,'code',None)!=200:raise Blocked('Lighter提交结果未知；禁止自动重发')
   return {'id':None,'terminal':False,'maker':False}
  async def order(self,i):
@@ -141,15 +156,39 @@ class Venue:
    return out
   d=(await self.lt.order_api.trades(sort_by='timestamp',limit=100,authorization=self.auth(),market_id=MID,account_index=self.index,order_index=oid,aggregate=False,_request_timeout=5.0)).to_dict()
   if d.get('code')!=200 or d.get('next_cursor'):raise Blocked('Lighter成交账单不完整')
-  out=[]
+  out=[];trades=[];missing=False
   for x in d['trades']:
    ask=i['side']==-1;prefix='ask' if ask else 'bid'
    if x[prefix+'_id']!=oid:continue
    if x['market_id']!=MID or x[prefix+'_account_id']!=self.index or int(x[prefix+'_client_id'])!=i['client']:raise Blocked('Lighter成交身份不匹配')
-   maker=x['is_maker_ask']==ask;role='maker' if maker else 'taker'
-   if x.get(role+'_fee') is None or x.get('integrator_'+role+'_fee',0):raise Blocked('实际费用字段未知或含未经核实的额外费用')
+   trades.append(x);maker=x['is_maker_ask']==ask;role='maker' if maker else 'taker'
+   if x.get(role+'_fee') is None or x.get('integrator_'+role+'_fee') is None or x.get('integrator_'+role+'_fee') or x.get(prefix+'_account_pnl') is None:
+    missing=True;continue
    q=float(x['size']);p=float(x['price']);fee=q*p*float(x[role+'_fee'])/1e6
    out.append(dict(venue='lt',id=str(x['trade_id']),side=i['side'],qty=q,price=p,fee=fee,pnl=float(x[prefix+'_account_pnl'])))
+  if missing:return await self.aggregate_fills(i,oid,trades)
+  return out
+ async def aggregate_fills(self,i,oid,trades):
+  # Missing raw fields never mean zero. Match official aggregates to exact raw fills.
+  d=await self.get('aggregatedTrades',{'account_index':self.index,'market_id':MID,'order_index_str':str(oid),'limit':100})
+  if d.get('code')!=200 or d.get('next_cursor') or not d.get('trades'):raise Blocked('聚合成交账单尚未完整')
+  out=[];roles=set()
+  for x in d['trades']:
+   if x.get('account_index')!=self.index or str(x.get('order_id'))!=str(oid) or x.get('market_id')!=MID or x.get('is_ask')!=(i['side']<0) or x.get('type')!='trade' or x.get('role') not in {'maker','taker'}:raise Blocked('聚合账单订单归属不匹配')
+   role=x['role']
+   if role in roles:raise Blocked('聚合成交分组重复')
+   roles.add(role);raw=[t for t in trades if ('maker' if t['is_maker_ask']==(i['side']<0) else 'taker')==role]
+   q=sum(float(t['size']) for t in raw);value=sum(float(t['size'])*float(t['price']) for t in raw)
+   if not raw or x.get('fill_count')!=len(raw) or abs(float(x['size'])-q)>1e-9 or abs(float(x['usd_amount'])-value)>1e-5 or str(x.get('first_trade_id'))!=str(min(t['trade_id'] for t in raw)) or str(x.get('last_trade_id'))!=str(max(t['trade_id'] for t in raw)):raise Blocked('聚合账单与逐笔成交不一致')
+   if x.get('fee_asset_id')!=3 or x.get('fee') is None or x.get('integrator_fee') is None:raise Blocked('聚合费用币种或金额未知')
+   pnl=x.get('pnl')
+   if pnl is None:
+    if i.get('reduce'):raise Blocked('平仓已实现盈亏未知')
+    pnl=0 # Official schema: null when these fills did not reduce a position.
+   fee=float(x['fee'])+float(x['integrator_fee']);pnl=float(pnl)
+   if not all(number(z) for z in [q,value,fee,pnl]) or q<=0 or value<=0:raise Blocked('聚合账单数值无效')
+   out.append(dict(venue='lt',id=f'aggregate:{oid}:{role}',side=i['side'],qty=q,price=value/q,fee=fee,pnl=pnl))
+  if abs(sum(z['qty'] for z in out)-sum(float(t['size']) for t in trades))>1e-9:raise Blocked('聚合账单存在缺失成交')
   return out
  async def settle(self,i,ack,stop):
   if ack.get('rejected'):return {'terminal':True,'fills':[]}

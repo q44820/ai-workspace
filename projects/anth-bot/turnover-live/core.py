@@ -49,7 +49,10 @@ def entry(b,c,di,dl):
  a=[]
  for direction in ['S','L']:
   sign=1 if direction=='S' else -1;p=b['io']['asks' if sign==1 else 'bids'][0][0]
-  q=size_for(c,p,b['lt']['asks' if sign==1 else 'bids'][0][0],di,dl)
+  try:q=size_for(c,p,b['lt']['asks' if sign==1 else 'bids'][0][0],di,dl)
+  except ValueError:continue
+  # A valid but shallow book is a skipped opportunity, not a failed session.
+  if any(sum(z for _,z in rows)<q for rows in [b['lt']['asks'],b['lt']['bids'],b['io']['asks' if sign==1 else 'bids']]):continue
   li=vwap(b['lt']['asks' if sign==1 else 'bids'],q)*(1+sign*.0001)
   lo=vwap(b['lt']['bids' if sign==1 else 'asks'],q)*(1-sign*.0001)
   io=vwap(b['io']['asks' if sign==1 else 'bids'],q)*(1+sign*.0001)
@@ -247,7 +250,7 @@ class Controller:
      self.state['phase']='draining' if draining else 'position';await self.pair(b,None,True,emergency)
     elif draining:
      await self.venue.no_orders();await self.verify();self.state.update(phase='finished',message='已停止；本程序订单终态已确认且两所仓位归零');break
-    elif time.time()-started>=60 and samples>=10 and time.time()-self.state.get('lastClose',0)>=10:
+    elif time.time()-started>=60 and samples>=10 and time.time()-(self.state.get('lastClose') or 0)>=10:
      a=entry(b,self.config,self.venue.io_dec,self.venue.lt_dec)
      self.state['phase']='quoting' if a else 'cost-risk'
      if a:await self.pair(b,a)
