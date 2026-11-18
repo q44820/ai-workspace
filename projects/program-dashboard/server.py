@@ -144,6 +144,20 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts)<4 or parts[1]!='v' or not hmac.compare_digest(hashlib.sha256(parts[2].encode()).hexdigest(), self.server.token_hash):
             return self.response(b'{"error":"not_found"}',404,head=head)
         suffix = '/'.join(parts[3:])
+        if suffix.startswith('anth-live/'):
+            name=suffix[len('anth-live/'):]
+            if name=='api/status':
+                try:
+                    candidate=getattr(self.server,'live_status_file',self.server.inventory.runtime/'anth-status.json')
+                    data=json.loads(candidate.read_text())
+                    return self.response(json.dumps(data,ensure_ascii=False).encode(),head=head)
+                except (OSError,ValueError,TypeError):
+                    return self.response(b'{"ok":false,"err":"local status unavailable"}',503,head=head)
+            assets={'':('japan.html','text/html; charset=utf-8'),'dashboard.css':('dashboard.css','text/css; charset=utf-8'),'dashboard.js':('dashboard.js','text/javascript; charset=utf-8'),'chart.umd.min.js':('chart.umd.min.js','text/javascript; charset=utf-8')}
+            if name not in assets:return self.response(b'{"error":"not_found"}',404,head=head)
+            filename,kind=assets[name];candidate=HERE.parent/'anth-bot'/'live-dashboard'/filename
+            if not candidate.is_file():return self.response(b'{"error":"live_not_installed"}',503,head=head)
+            return self.response(candidate.read_bytes(),content_type=kind,head=head)
         if suffix.startswith('anth-paper/'):
             name = suffix[len('anth-paper/'):]
             assets = {'':('paper.html','text/html; charset=utf-8'),'paper_engine.js':('paper_engine.js','text/javascript; charset=utf-8'),'paper_app.js':('paper_app.js','text/javascript; charset=utf-8'),'paper.css':('paper.css','text/css; charset=utf-8')}
@@ -184,6 +198,7 @@ def main():
     server = ThreadingHTTPServer((args.host,args.port),Handler)
     server.token_hash = token_hash
     server.inventory = Inventory(runtime)
+    server.live_status_file=Path(os.environ.get('ANTH_LIVE_STATUS_FILE','/var/lib/anth-status-publisher/status.json'))
     server.serve_forever()
 
 if __name__=='__main__':

@@ -27,7 +27,7 @@ def presentation(snapshot):
     return data
 
 
-def load_config(path):
+def load_config(path, local=False):
     allowed = {'PUBLIC_PATH', 'PUBLIC_PORT', 'STATUS_PUSH_URL', 'STATUS_PUSH_TOKEN'}
     values = {}
     for line in Path(path).read_text().splitlines():
@@ -36,14 +36,18 @@ def load_config(path):
         key, value = line.split('=', 1)
         if key.strip() in allowed:
             values[key.strip()] = value.strip().strip('\"\x27')
-    assert all(values.get(k) for k in allowed), 'Missing publisher config'
+    required={'PUBLIC_PATH','PUBLIC_PORT'} if local else allowed
+    assert all(values.get(k) for k in required), 'Missing publisher config'
+    if local:
+        assert values['PUBLIC_PORT'].isdigit(), 'Invalid local port'
+        return {k:values[k] for k in required}
     url = urllib.parse.urlsplit(values['STATUS_PUSH_URL'])
     assert url.scheme == 'https' and url.hostname == 'anth-live.vercel.app' and url.path == '/api/ingest', 'Unexpected publish target'
     assert values['PUBLIC_PORT'].isdigit(), 'Invalid local port'
     return values
 
 
-def publish_once(config, opener=None):
+def publish_once(config, opener=None, local_file=None):
     # Local direct reads must not use a network proxy. No control token is loaded.
     opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}))
     capability = urllib.parse.quote(config['PUBLIC_PATH'].strip('/'), safe='')
@@ -55,7 +59,14 @@ def publish_once(config, opener=None):
             and not isinstance(source_time, bool) and math.isfinite(source_time)
             and -10000 <= time.time() * 1000 - source_time <= 90000), 'Stale source'
     # Preserve source timestamp. Do not synthesize freshness from ingestion time.
-    body = json.dumps(presentation(data), ensure_ascii=False).encode()
+    output=presentation(data)
+    if local_file is not None:
+        output['statusPublisher']='local-file-v1'
+        target=Path(local_file);target.parent.mkdir(parents=True,exist_ok=True)
+        temp=target.with_suffix(target.suffix+'.new')
+        temp.write_text(json.dumps(output,ensure_ascii=False));temp.chmod(0o644);temp.replace(target)
+        return True
+    body = json.dumps(output, ensure_ascii=False).encode()
     request = urllib.request.Request(config['STATUS_PUSH_URL'], data=body,
         headers={'Authorization': 'Bearer ' + config['STATUS_PUSH_TOKEN'],
                  'Content-Type': 'application/json'}, method='POST')
@@ -69,11 +80,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--env-file', default='/opt/anth-bot/.env')
     parser.add_argument('--once', action='store_true')
+    parser.add_argument('--local-file')
     args = parser.parse_args()
-    config = load_config(args.env_file)
+    config = load_config(args.env_file,local=bool(args.local_file))
     while True:
         try:
-            written = publish_once(config)
+            written = publish_once(config,local_file=args.local_file)
             print('STATUS_WRITTEN' if written else 'STATUS_COALESCED', flush=True)
         except Exception:
             print('STATUS_PUBLISH_FAILED', flush=True)

@@ -143,4 +143,20 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,405)
         finally:http.shutdown();http.server_close();thread.join()
 
+    def test_16_live_dashboard_is_authenticated_readonly_and_local(self):
+        token='fixture-access-code';http=ThreadingHTTPServer(('127.0.0.1',0),server.Handler);http.token_hash=hashlib.sha256(token.encode()).hexdigest();http.inventory=server.Inventory(self.runtime,catalog=[]);http.live_status_file=self.runtime/'anth-status.json';http.live_status_file.write_text(json.dumps({'ok':True,'ts':123,'mode':'live'}));thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start();opener=urllib.request.build_opener(urllib.request.ProxyHandler({}));base='http://127.0.0.1:'+str(http.server_port)
+        try:
+            for name in ['','dashboard.css','dashboard.js','chart.umd.min.js','api/status']:
+                with opener.open(base+'/v/'+token+'/anth-live/'+name,timeout=4) as r:
+                    self.assertEqual(r.status,200);self.assertIn('no-store',r.headers['Cache-Control'])
+                    if name=='api/status':self.assertEqual(json.load(r)['ts'],123)
+            for name in ['.env','bot.py','../../runtime/access.sha256']:
+                with self.assertRaises(urllib.error.HTTPError) as caught:opener.open(base+'/v/'+token+'/anth-live/'+name,timeout=4)
+                self.assertEqual(caught.exception.code,404)
+            with self.assertRaises(urllib.error.HTTPError):opener.open(base+'/v/wrong/anth-live/api/status')
+            req=urllib.request.Request(base+'/v/'+token+'/anth-live/api/status',data=b'{}',method='POST')
+            with self.assertRaises(urllib.error.HTTPError) as caught:opener.open(req)
+            self.assertEqual(caught.exception.code,405)
+        finally:http.shutdown();http.server_close();thread.join()
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -42,4 +42,15 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(len(calls),1)
 
 
+    def test_local_sink_never_posts_to_blob_and_preserves_source_timestamp(self):
+        import tempfile
+        from pathlib import Path
+        calls=[];s=self.snapshot()
+        class Opener:
+            def open(self,request,timeout):calls.append(request);return io.BytesIO(json.dumps(s).encode())
+        with tempfile.TemporaryDirectory() as d:
+            target=Path(d)/'status.json'
+            self.assertTrue(pub.publish_once(dict(PUBLIC_PATH='fixture-only',PUBLIC_PORT='8788'),Opener(),target))
+            out=json.loads(target.read_text());self.assertEqual(out['ts'],s['ts']);self.assertEqual(len(calls),1);self.assertEqual(out['statusPublisher'],'local-file-v1')
+
 if __name__=='__main__':unittest.main()

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ANTH 跨所价差 · 实盘看板</title>
+<link rel="icon" href="data:,">
+<script src="chart.umd.min.js"></script>
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body><div class="wrap">
+<h1>ANTH 跨所价差回归 · 实盘看板</h1>
+<div class="sub">Entropy io:ANTH × Lighter 主站 ANTHROPIC ｜ 价差 = io / Lighter − 1 ｜ 只读，不能下单或改参数 ｜ 每10秒读取，服务器本地约30秒刷新；超过90秒标为状态未知</div>
+<div class="card" style="margin-top:12px"><a id="volume-version-link" href="../anth-paper/#volume" style="display:inline-block;padding:10px 16px;background:#238636;color:white;border-radius:7px;text-decoration:none;font-weight:700">刷交易量版本</a><div class="sub" style="margin-top:6px">独立模拟参数：成交额目标、亏损预算、费率、持仓及冷却；不下真实订单，不改变此页实盘策略。</div></div>
+<div id="banner" class="banner">正在连接看板…</div>
+<div id="alert"></div>
+<div id="statusHistory" class="sub"></div>
+
+<div class="grid g4">
+  <div class="card"><div class="k">运行状态</div><div class="v" id="mode">—</div><div class="s" id="modeS">—</div></div>
+  <div class="card"><div class="k">当前价差 / 2小时中位数</div><div class="v" id="spr">—</div><div class="s" id="dev">—</div><div class="bar" id="trigBar" hidden><i id="trigFill" style="width:0"></i></div></div>
+  <div class="card"><div class="k">当前持仓 · 浮动盈亏</div><div class="v" id="uPnL">—</div><div class="s" id="posS">无持仓</div></div>
+  <div class="card"><div class="k">累计实际盈亏（含两边手续费） / 胜率 / 笔数</div><div class="v" id="net">—</div><div class="s" id="totS">—</div></div>
+</div>
+
+<div class="grid g2" style="margin-top:10px">
+  <div class="card" style="margin:0"><div class="k"><span class="dot" id="dIo"></span>Entropy io:ANTH</div><div class="v" id="pIo">—</div><div class="s" id="baIo">买一 — / 卖一 —</div></div>
+  <div class="card" style="margin:0"><div class="k"><span class="dot" id="dLt"></span>Lighter 主站 ANTHROPIC</div><div class="v" id="pLt">—</div><div class="s" id="baLt">买一 — / 卖一 —</div></div>
+</div>
+
+<div class="grid g2" style="margin-top:10px">
+  <div class="card" style="margin:0"><div class="k">Entropy 余额</div><div class="v" id="balIo">—</div><div class="s" id="balIoS">—</div></div>
+  <div class="card" style="margin:0"><div class="k">Lighter 余额</div><div class="v" id="balLt">—</div><div class="s" id="balLtS">—</div></div>
+</div>
+
+<div class="card" style="margin-top:10px">
+  <h2>价差与中位数（最近 6 小时）</h2>
+  <div class="chartbox"><canvas id="ch"></canvas></div>
+</div>
+
+<div class="card" style="margin-top:10px">
+  <h2>成交记录</h2>
+  <div class="tw"><table><thead><tr>
+    <th>轮次</th><th>开仓时间(北京)</th><th>方向</th><th>持仓</th><th>实际入场价差</th><th>实际出场价差</th><th>收益 bp</th><th>实际收益 U</th><th>余额变化 U</th><th>手续费 U</th><th>盘口估算 U</th><th>原因</th><th>类型</th>
+  </tr></thead><tbody id="tb"></tbody></table></div>
+</div>
+
+<div class="card" style="margin-top:10px">
+  <h2>运行日志（已去掉敏感信息）</h2>
+  <div class="tw" style="max-height:320px;overflow-y:auto"><table><thead><tr><th>时间(北京)</th><th>类型</th><th>内容</th></tr></thead><tbody id="ol"></tbody></table></div>
+</div>
+
+<div class="note" id="foot">数据由东京服务器上的机器人在本机生成快照供看板读取（不使用Vercel Blob），页面本身不能改模式、不能下单。时间均为北京时间（UTC+8，与香港相同）。</div>
+</div>
+<script src="dashboard.js"></script>
+</body></html>
