@@ -5,7 +5,7 @@ exceptions or account identifiers over HTTP. Tested signatures: HL .24 / LT 1.1.
 import asyncio,math,os,time
 from decimal import Decimal,ROUND_CEILING,ROUND_FLOOR
 import aiohttp
-from core import Blocked,number
+from core import Blocked,ReceiptPending,number
 COIN='io:ANTH';MID=193;HL='https://api.hyperliquid.xyz/info';LT='https://mainnet.zklighter.elliot.ai'
 
 def hl_price(price,sz_dec,buy,maker):
@@ -171,7 +171,8 @@ class Venue:
  async def aggregate_fills(self,i,oid,trades):
   # Missing raw fields never mean zero. Match official aggregates to exact raw fills.
   d=await self.get('aggregatedTrades',{'account_index':self.index,'market_id':MID,'order_index_str':str(oid),'limit':100})
-  if d.get('code')!=200 or d.get('next_cursor') or not d.get('trades'):raise Blocked('聚合成交账单尚未完整')
+  if d.get('code')!=200 or d.get('next_cursor'):raise Blocked('聚合成交账单不完整或接口状态异常')
+  if not d.get('trades'):raise ReceiptPending('订单已确认；聚合账单暂未可见，仅重查不重下单')
   out=[];roles=set()
   for x in d['trades']:
    if x.get('account_index')!=self.index or str(x.get('order_id'))!=str(oid) or x.get('market_id')!=MID or x.get('is_ask')!=(i['side']<0) or x.get('type')!='trade' or x.get('role') not in {'maker','taker'}:raise Blocked('聚合账单订单归属不匹配')
@@ -192,13 +193,20 @@ class Venue:
   return out
  async def settle(self,i,ack,stop):
   if ack.get('rejected'):return {'terminal':True,'fills':[]}
-  end=time.monotonic()+18;cancelled=False;latest=None
+  end=time.monotonic()+45;cancelled=False;latest=None
   while time.monotonic()<end:
-   o=await self.order(i)
+   try:o=await self.order(i)
+   except Exception as ex:
+    if not self.transient_read_error(ex):raise
+    await asyncio.sleep(.4);continue
    if o:
     latest=o
     if o['terminal']:
-     f=await self.fills(i,o['id']);q=sum(x['qty'] for x in f)
+     try:f=await self.fills(i,o['id'])
+     except Exception as ex:
+      if not isinstance(ex,ReceiptPending) and not self.transient_read_error(ex):raise
+      await asyncio.sleep(.4);continue
+     q=sum(x['qty'] for x in f)
      expected=i['qty'] if o['filled'] is None else o['filled']
      if abs(q-expected)<1e-8:return {'terminal':True,'fills':f}
     # Partial maker fill: cancel remainder once, then hedge only after cancel terminal.
@@ -208,3 +216,7 @@ class Venue:
      await asyncio.wait_for(asyncio.to_thread(self.hl.cancel_by_cloid,COIN,Cloid.from_str('0x'+i['client'])),5)
    await asyncio.sleep(.4)
   raise Blocked('订单终态/成交账单未及时确认；冻结，禁止重发')
+ @staticmethod
+ def transient_read_error(ex):
+  import aiohttp
+  return isinstance(ex,(TimeoutError,ConnectionError,aiohttp.ClientConnectionError)) or getattr(ex,'status',None) in {408,429,500,502,503,504}

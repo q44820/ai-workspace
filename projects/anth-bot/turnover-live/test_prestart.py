@@ -85,7 +85,7 @@ class Prestart(unittest.IsolatedAsyncioTestCase):
   with self.assertRaises(core.Blocked):await v.fills(i,12)
  async def test_unknown_ioc_terminal_never_assumed_filled(self):
   v=adapter.Venue();v.order=AsyncMock(return_value=None);v.fills=AsyncMock()
-  with patch('adapter.time.monotonic',side_effect=[0,19]):
+  with patch('adapter.time.monotonic',side_effect=[0,46]):
    with self.assertRaises(core.Blocked):await v.settle(dict(venue='lt'),dict(maker=False),asyncio.Event())
   self.assertEqual(v.fills.await_count,0)
  async def test_zero_fee_omission_requires_exact_aggregate_evidence(self):

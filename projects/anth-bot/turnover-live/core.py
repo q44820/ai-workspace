@@ -9,6 +9,7 @@ from decimal import Decimal,ROUND_DOWN
 from pathlib import Path
 
 class Blocked(RuntimeError):pass
+class ReceiptPending(Blocked):pass # Eventual-consistency gap; safe to retry READS only.
 
 def number(v):return not isinstance(v,bool) and isinstance(v,(int,float)) and math.isfinite(v)
 @dataclass(frozen=True)
@@ -131,7 +132,7 @@ class Controller:
   except BaseException:
    await v.close();raise
   return v
- async def start(self,d,resume=False):
+ async def start(self,d,resume=False,reset_stop=True):
   async with self.mutex:
    if self.running:raise Blocked('已有会话运行，禁止重复启动')
    if resume:
@@ -139,7 +140,9 @@ class Controller:
    elif self.position or self.state.get('session') or self.state['phase']=='needs_review' or self.state['journal']:raise Blocked('本实例有旧会话/未核实订单；不得重置预算或重复授权')
    c=Config.parse(d)
    if resume and any(getattr(c,k)>getattr(self.config,k) for k in ['target','round_cap','loss']):raise ValueError('继续测试不能扩大原会话预算')
-   self.config=c;self.stop.clear();self.state['phase']='preflight';self.persist()
+   self.config=c
+   if reset_stop:self.stop.clear()
+   self.state['phase']='preflight';self.persist()
    try:
     self.venue=await self.preflight()
     actual=await self.venue.exposure()
