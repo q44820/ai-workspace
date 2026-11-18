@@ -78,7 +78,11 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(set(collect_local.PROJECT_IDS.values()),{'binance-alpha','binance-booster'})
     def test_09_catalog_matches_all_github_project_directories(self):
         rows=json.loads((server.HERE/'catalog.json').read_text())
-        slugs={row['code'].rsplit('/',1)[-1] for row in rows}
+        prefix='https://github.com/q44820/ai-workspace/tree/main/projects/'
+        paths=[row['code'].removeprefix(prefix).split('#',1)[0] for row in rows]
+        self.assertTrue(all(p and '..' not in Path(p).parts for p in paths))
+        self.assertTrue(all((server.HERE.parent/p/'README.md').is_file() for p in paths))
+        slugs={Path(p).parts[0] for p in paths}
         actual={p.name for p in server.HERE.parent.iterdir() if p.is_dir() and (p/'README.md').is_file()}
         self.assertEqual(slugs,actual)
         self.assertEqual(len(rows),len({row['id'] for row in rows}))

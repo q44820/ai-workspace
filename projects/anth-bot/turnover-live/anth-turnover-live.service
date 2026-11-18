@@ -1,0 +1,27 @@
+[Unit]
+Description=ANTH turnover user-started local control API (default trading stopped)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/anth-bot/turnover-live
+EnvironmentFile=/opt/anth-bot/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/anth-bot/venv/bin/python server.py --port 8911 --state /var/lib/anth-turnover-live/state.json --token-file /home/ubuntu/program-dashboard/runtime/turnover-api.token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+StateDirectory=anth-turnover-live
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/anth-turnover-live
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

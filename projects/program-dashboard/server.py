@@ -10,6 +10,8 @@ import os
 import subprocess
 import threading
 import time
+import urllib.request
+import urllib.error
 
 from urllib.parse import urlsplit
 
@@ -158,6 +160,14 @@ class Handler(BaseHTTPRequestHandler):
             filename,kind=assets[name];candidate=HERE.parent/'anth-bot'/'live-dashboard'/filename
             if not candidate.is_file():return self.response(b'{"error":"live_not_installed"}',503,head=head)
             return self.response(candidate.read_bytes(),content_type=kind,head=head)
+        if suffix.startswith('anth-turnover-live/'):
+            name=suffix[len('anth-turnover-live/'):]
+            if name=='api/state':return self.turnover_proxy('GET','/state',head=head)
+            assets={'':('index.html','text/html; charset=utf-8'),'live.js':('live.js','text/javascript; charset=utf-8'),'live.css':('live.css','text/css; charset=utf-8')}
+            if name not in assets:return self.response(b'{"error":"not_found"}',404,head=head)
+            filename,kind=assets[name];candidate=HERE.parent/'anth-bot'/'turnover-live'/filename
+            if not candidate.is_file():return self.response(b'{"error":"live_not_installed"}',503,head=head)
+            return self.response(candidate.read_bytes(),content_type=kind,head=head)
         if suffix.startswith('anth-paper/'):
             name = suffix[len('anth-paper/'):]
             assets = {'':('paper.html','text/html; charset=utf-8'),'paper_engine.js':('paper_engine.js','text/javascript; charset=utf-8'),'paper_app.js':('paper_app.js','text/javascript; charset=utf-8'),'paper.css':('paper.css','text/css; charset=utf-8')}
@@ -180,9 +190,40 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET(head=True)
 
+    def turnover_proxy(self,method,path,body=None,head=False):
+        try:
+            token=(self.server.inventory.runtime/'turnover-api.token').read_text().strip()
+            if len(token)<32:raise ValueError('missing local token')
+            headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'}
+            if method=='POST':headers['X-Turnover-CSRF']=self.headers.get('X-Turnover-CSRF','')
+            request=urllib.request.Request('http://127.0.0.1:8911'+path,data=body,headers=headers,method=method)
+            # No environment proxy for the local control plane.
+            opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            try:
+                with opener.open(request,timeout=35) as r:data=r.read(524288);status=r.status
+            except urllib.error.HTTPError as e:data=e.read(524288);status=e.code
+            return self.response(data,status,head=head)
+        except Exception:
+            return self.response(b'{"ok":false,"error":"live_control_unavailable"}',503,head=head)
+
+    def do_POST(self):
+        parts=self.path.split('?',1)[0].split('/')
+        if len(parts)<4 or parts[1]!='v' or not hmac.compare_digest(hashlib.sha256(parts[2].encode()).hexdigest(),self.server.token_hash):
+            return self.response(b'{"error":"not_found"}',404)
+        suffix='/'.join(parts[3:])
+        if suffix not in {'anth-turnover-live/api/start','anth-turnover-live/api/stop'}:return self.deny_write()
+        # No CORS; origin must match the browser-facing host. CSRF is per service boot.
+        origin=self.headers.get('Origin','');host=self.headers.get('Host','')
+        if not origin or urlsplit(origin).scheme not in {'https','http'} or urlsplit(origin).netloc!=host:
+            return self.response(b'{"ok":false,"error":"origin_denied"}',403)
+        try:length=int(self.headers.get('Content-Length','0'))
+        except ValueError:return self.response(b'{"ok":false}',400)
+        if length<2 or length>4096 or self.headers.get_content_type()!='application/json':return self.response(b'{"ok":false,"error":"invalid_body"}',400)
+        return self.turnover_proxy('POST','/'+suffix.rsplit('/',1)[1],self.rfile.read(length))
+
     def deny_write(self):
         self.response(b'{"error":"read_only"}',405)
-    do_POST = do_PUT = do_DELETE = do_PATCH = deny_write
+    do_PUT = do_DELETE = do_PATCH = deny_write
 
 
 def main():

@@ -30,6 +30,16 @@
     "code": "https://github.com/q44820/ai-workspace/tree/main/projects/anth-bot"
   },
   {
+    "id": "anth-turnover-live",
+    "name": "ANTH小额实盘刷量（手动启动）",
+    "category": "用户自测工具",
+    "location": "日本服务器",
+    "purpose": "独立真实刷量入口，默认停止；两所合计1000U、每轮合计50U、亏损3U，原套利运行时禁止启动",
+    "usage": "进入专属网页自行确认风险并启动；不自动停止原套利，不共享模拟记录",
+    "schedule": "仅用户手动启动后运行",
+    "code": "https://github.com/q44820/ai-workspace/tree/main/projects/anth-bot/turnover-live"
+  },
+  {
     "id": "program-dashboard",
     "name": "程序总览看板",
     "category": "管理工具",
