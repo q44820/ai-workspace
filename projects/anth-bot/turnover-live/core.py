@@ -111,14 +111,17 @@ class Controller:
   self.path=Path(path);self.factory=factory;self.config=Config();self.running=False;self.stop=asyncio.Event();self.task=None;self.mutex=asyncio.Lock();self.market=None;self.funding=None
   self.state={'phase':'stopped','journal':[],'fills':[],'config':asdict(self.config),'session':None,'message':'默认停止；本页不会自动下单'}
   if self.path.exists():
-   self.state=json.loads(self.path.read_text());self.config=Config.parse(self.state.get('config',{}));self.state['phase']='needs_review' if self.state.get('phase') not in {'stopped','finished','rejected'} else self.state['phase'];self.state['message']='重启后不自动恢复；保留原订单日志和风险，需核对交易所'
+   self.state=json.loads(self.path.read_text());self.config=Config.parse(self.state.get('config',{}));self.state['phase']='needs_review' if self.state.get('phase') not in {'stopped','finished','rejected'} else self.state['phase'];self.state['message']='已核对手动平仓；保留原会话成交和预算，等待勾选继续。资金费待启动后核实' if self.state.get('resumeReady') else '重启后不自动恢复；保留原订单日志和风险，需核对交易所'
   self.ledger=Ledger(self.state.get('fills',[]))
   self.position=self.state.get('position')
+  self.funding=self.state.get('funding')
+ def can_resume(self):
+  return bool(self.state.get('resumeReady') and self.state.get('recovery') and self.state.get('session') and not self.position and self.state['phase'] in {'stopped','rejected'} and all(i.get('outcome')=='terminal' for i in self.state['journal']) and all(abs(self.ledger.qty(k))<1e-9 for k in ['io','lt']))
  def persist(self):
-  self.state.update(config=asdict(self.config),fills=self.ledger.rows,position=self.position,updated=time.time())
+  self.state.update(config=asdict(self.config),fills=self.ledger.rows,position=self.position,funding=self.funding,updated=time.time())
   self.path.parent.mkdir(parents=True,exist_ok=True);p=self.path.with_suffix('.new');p.write_text(json.dumps(self.state,ensure_ascii=False));p.chmod(0o600);p.replace(self.path)
  def public(self):
-  return {'ok':True,'running':self.running,'phase':self.state['phase'],'message':self.state.get('message'),'config':asdict(self.config),'session':self.state.get('session'),'started':self.state.get('started'),'updated':self.state.get('updated'),'market':self.market,'position':self.position,'volume':{'io':self.ledger.side_volume('io'),'lt':self.ledger.side_volume('lt'),'both':self.ledger.total},'realizedNetExFunding':self.ledger.net,'fees':self.ledger.fees,'funding':self.funding,'riskEquity':self.state.get('riskEquity'),'orders':[{'venue':i['venue'],'purpose':i['purpose'],'outcome':i['outcome'],'qty':i['qty'],'side':i['side'],'created':i['created']} for i in self.state['journal'][-30:]],'fills':self.ledger.rows[-100:],'limitsNote':'两所开平累计1000U停止开新仓；每轮双边开仓合计≤50U。3U是触发线不是损失保证；收尾可超量。真实费用按交易所返回，未知不记0。'}
+  return {'ok':True,'canResume':self.can_resume(),'running':self.running,'phase':self.state['phase'],'message':self.state.get('message'),'config':asdict(self.config),'session':self.state.get('session'),'started':self.state.get('started'),'updated':self.state.get('updated'),'market':self.market,'position':self.position,'volume':{'io':self.ledger.side_volume('io'),'lt':self.ledger.side_volume('lt'),'both':self.ledger.total},'realizedNetExFunding':self.ledger.net,'fees':self.ledger.fees,'funding':self.funding,'riskEquity':self.state.get('riskEquity'),'orders':[{'venue':i['venue'],'purpose':i['purpose'],'outcome':i['outcome'],'qty':i['qty'],'side':i['side'],'created':i['created']} for i in self.state['journal'][-30:]],'fills':self.ledger.rows[-100:],'limitsNote':'两所开平累计1000U停止开新仓；每轮双边开仓合计≤50U。3U是触发线不是损失保证；收尾可超量。真实费用按交易所返回，未知不记0。'}
  async def preflight(self):
   if other_service_active():raise Blocked('原套利服务仍运行或状态未知，共用账户禁止启动；本程序不会停止原服务')
   if self.state['phase']=='needs_review' or any(x['outcome']=='unknown' for x in self.state['journal']):raise Blocked('有未核实的旧订单；禁止重发或新开仓')
@@ -128,18 +131,28 @@ class Controller:
   except BaseException:
    await v.close();raise
   return v
- async def start(self,d):
+ async def start(self,d,resume=False):
   async with self.mutex:
    if self.running:raise Blocked('已有会话运行，禁止重复启动')
-   if self.position or self.state.get('session') or self.state['phase']=='needs_review' or any(i['outcome']=='unknown' for i in self.state['journal']):raise Blocked('本实例有旧会话/未核实订单；不得重置预算或重复授权')
-   self.config=Config.parse(d);self.stop.clear();self.state['phase']='preflight';self.persist()
+   if resume:
+    if not self.can_resume():raise Blocked('旧会话尚未完成空仓和成交核验，不可继续')
+   elif self.position or self.state.get('session') or self.state['phase']=='needs_review' or self.state['journal']:raise Blocked('本实例有旧会话/未核实订单；不得重置预算或重复授权')
+   c=Config.parse(d)
+   if resume and any(getattr(c,k)>getattr(self.config,k) for k in ['target','round_cap','loss']):raise ValueError('继续测试不能扩大原会话预算')
+   self.config=c;self.stop.clear();self.state['phase']='preflight';self.persist()
    try:
     self.venue=await self.preflight()
+    actual=await self.venue.exposure()
+    if any(abs(actual[k])>1e-9 for k in ['io','lt']):raise Blocked('启动前真实仓位非零，禁止继续')
     if self.stop.is_set():
      await self.venue.close();self.venue=None;raise Blocked('预检期间用户已请求停止，未启动交易')
    except BaseException as e:
+    if self.venue is not None:
+     await self.venue.close();self.venue=None
     self.diagnose(e,'preflight');self.state['phase']='rejected';self.state['message']='启动预检未通过；未发送订单。'+self.failure_label();self.persist();raise
-   self.stop.clear();self.running=True;self.state.update(phase='warmup',session=secrets.token_hex(12),started=time.time(),message='已由用户手动启动；60秒真实行情预热');self.persist();self.task=asyncio.create_task(self.run());return self.public()
+   self.stop.clear();self.running=True;self.state.update(phase='warmup',resumeReady=False,message='用户手动继续原会话；保留累计成交及亏损预算，60秒预热' if resume else '已由用户手动启动；60秒真实行情预热')
+   if not resume:self.state.update(session=secrets.token_hex(12),started=time.time())
+   self.persist();self.task=asyncio.create_task(self.run());return self.public()
  async def request_stop(self):
   self.stop.set();self.state['message']='用户停止：撤本程序挂单并收尾自己的仓位，不清除历史';self.persist();return self.public()
  async def execute(self,leg,side,qty,price,purpose,maker=False):

@@ -23,8 +23,9 @@ def create_app(state,token,factory=None):
    d=await r.json()
    if not isinstance(d,dict):raise ValueError()
    if r.path=='/start':
-    if set(d)!={'confirm','config'} or d['confirm']!='用户手动启动本次真实合约小额试验':raise ValueError('必须手动确认真实合约风险')
-    out=await controller.start(d['config'])
+    if set(d) not in [{'confirm','config'},{'confirm','config','continueSession'}] or d['confirm']!='用户手动启动本次真实合约小额试验':raise ValueError('必须手动确认真实合约风险')
+    if 'continueSession' in d and not isinstance(d['continueSession'],bool):raise ValueError('继续会话标记无效')
+    out=await controller.start(d['config'],resume=d.get('continueSession') is True)
    else:out=await controller.request_stop()
    return web.json_response(out,headers={'Cache-Control':'no-store'})
   except (Blocked,ValueError) as e:return web.json_response({'ok':False,'error':str(e) or '输入无效'},status=409)
