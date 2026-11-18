@@ -36,5 +36,6 @@ jobs:
           node projects/anth-bot/test_paper_engine.cjs
           node projects/anth-bot/test_paper_ui.cjs
           node projects/anth-bot/test_volume_profit.cjs
+          node projects/anth-bot/test_author_volume.cjs
           node projects/anth-bot/live-dashboard/test_status.cjs
           python3 -m unittest discover -s projects/anth-bot/live-dashboard -p 'test_publish_status.py'
