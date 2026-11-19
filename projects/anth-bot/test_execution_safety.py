@@ -79,6 +79,41 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
   self.first='unknown';await self.drive();self.v.lookup_order=self.lookup;self.v._lookup_at.clear();bot.S.pos.update(t=bot.now_ms()-1000,spread=0.,opening_pending=True);await bot.reconcile_exit(bot.now_ms());self.assertTrue(bot.S.pos['rescue_pending']);self.assertEqual(bot.S.pos['close_requested'],'残腿全平');self.assertEqual(bot.S.mode,'stopped');self.assertEqual(len(self.sent),1)
  async def test_delayed_flat_clears_alert_stays_stopped(self):
   bot.S.mode='stopped';bot.S.pos.update(t=bot.now_ms()-1000,spread=0.);bot.S.exit_pending={'submitted':True,'why':'残腿全平'};bot.S.alert='⚠️ 平仓未完成，已停止机器人，请手动检查两边持仓';await bot.reconcile_exit(bot.now_ms());self.assertIsNone(bot.S.pos);self.assertNotIn('平仓未完成',bot.S.alert or '');self.assertEqual(bot.S.mode,'stopped')
+ async def test_normal_close_waits_for_terminal_receipts_then_stays_live(self):
+  p=bot.S.pos; assert p is not None
+  p.update(t=bot.now_ms()-1000,spread=0.,N=290.); self.q[:]=[-.174,.174]
+  original_drive=self.v.drive_to
+  async def delayed(*a,**k):
+   result=await original_drive(*a,**k)
+   self.v._lookup_at.clear()
+   return result
+  async def missing_receipt(i): return {}
+  self.v.lookup_order=missing_receipt
+  self.v.drive_to=delayed
+  self.v.fills=AsyncMock(side_effect=TimeoutError('optional fills delayed'))
+  await bot.close_round(bot.now_ms(),0.,'回归中位数')
+  self.assertEqual(bot.S.mode,'live');self.assertIsNotNone(bot.S.pos);assert bot.S.exit_pending is not None
+  self.assertTrue(bot.S.exit_pending['submitted'])
+  sent=len(self.sent);self.assertGreater(sent,0)
+  await bot.close_round(bot.now_ms(),0.,'回归中位数');self.assertEqual(len(self.sent),sent)
+  self.v.lookup_order=self.lookup; self.v._lookup_at.clear(); self.v._exposure_at=None
+  await bot.reconcile_exit(bot.now_ms())
+  self.assertIsNone(bot.S.pos);self.assertIsNone(bot.S.exit_pending);self.assertEqual(bot.S.mode,'live');self.assertGreater(bot.S.cool,bot.now_ms());self.assertEqual(len(self.sent),sent);self.assertIsNone(bot.S.alert)
+ async def test_missing_optional_fills_does_not_prevent_confirmed_flat(self):
+  p=bot.S.pos; assert p is not None
+  p.update(t=bot.now_ms()-1000,spread=0.,N=290.,pxIo=1700.,pxLt=1660.); self.q[:]=[-.174,.174]
+  self.v.fills=AsyncMock(side_effect=TimeoutError('optional fills delayed'))
+  with patch.object(bot.asyncio,'sleep',new=AsyncMock()):
+   await bot.close_round(bot.now_ms(),0.,'回归中位数')
+  self.assertEqual(bot.S.mode,'live');self.assertIsNone(bot.S.pos);self.assertEqual(self.q,[0.,0.]);self.assertEqual(len(self.sent),2)
+  self.assertFalse(bot.S.trades[-1]['real']); self.assertIsNone(bot.S.trades[-1]['u'])
+ async def test_stop_loss_close_with_missing_receipt_stays_stopped(self):
+  p=bot.S.pos; assert p is not None
+  p.update(t=bot.now_ms()-1000,spread=0.,N=290.); self.q[:]=[-.174,.174]
+  self.v.lookup_order=AsyncMock(return_value={});self.v.fills=AsyncMock(return_value={})
+  await bot.close_round(bot.now_ms(),0.,'止损')
+  self.assertEqual(bot.S.mode,'stopped');assert bot.S.exit_pending is not None
+  self.assertTrue(bot.S.exit_pending['submitted'])
  async def test_reduce_thin_depth_still_submits_reduce_only(self):
   self.q[:]=[-.174,.174];bot.B.io['asks']=[(1700.1,.01)];bot.B.lt_b={'1660':.01};self.assertTrue(await self.v.drive_to(0,0,True,'平仓'));self.assertTrue(all(x[3] for x in self.sent));self.assertEqual(len(self.sent),2)
  async def test_open_round_first_reject_stays_stopped_and_flat(self):

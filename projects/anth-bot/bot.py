@@ -1025,16 +1025,23 @@ async def close_round(t, spr, why):
         tr = V.track_start()
         ok = await V.drive_to(0, 0, True, "平仓", close_reason=why)
         submitted = bool((getattr(V, "last_drive", None) or {}).get("submitted"))
-        fl = await V.fills(tr, - (1 if p["dir"] == "L" else -1) * p["qIo"], (1 if p["dir"] == "L" else -1) * p["qLt"])
-        # 上面符号：L 平仓 io 卖(-q)、lt 买(+q)；S 相反。与原 close_round 一致：si=1 if L else -1, fills(-si*qIo, si*qLt)
         if not ok:
             if submitted and unknown_orders():
                 S.exit_pending = dict(submitted=True, why=why, t=t)
-                S.alert = "⚠️ 平仓未完成，已停止机器人，请手动检查两边持仓"
-                S.mode = "stopped"
+                if S.mode == "live" and why == "回归中位数":
+                    S.alert = "正常平仓待核对订单终态，暂不新开仓、不会重复发单"
+                else:
+                    S.alert = "⚠️ 平仓未完成，已停止机器人，请手动检查两边持仓"
+                    S.mode = "stopped"
             else:
                 S.alert = f"⚠️ {why} 待处理：双腿预检未通过或未发单，本地仓位保留"
             S.note("err", S.alert); S.save(); return
+        try:
+            fl = await asyncio.wait_for(V.fills(tr, - (1 if p["dir"] == "L" else -1) * p["qIo"],
+                                                (1 if p["dir"] == "L" else -1) * p["qLt"]), V.read_timeout)
+        except Exception as exc:
+            S.note("err", f"平仓成交明细暂不可用（{type(exc).__name__}），以真实持仓和订单终态为准")
+            fl = {}
         rec = await _record_exit(p, t, why, fl, exio, exlt, uEst, feesEst, spr)
         _finalize_flat(rec, t)
         return
@@ -1141,6 +1148,8 @@ def _finalize_flat(rec, t):
                       + (f" ｜ 盘口估算 {uEst:+.4f}U" if uEst is not None else "")
                       + (f" ｜ 手续费 {fees:.4f}U" if fees is not None else ""))
     S.pos = None; S.exit_pending = None
+    if S.mode == "live" and rec.get("live") and why == "回归中位数":
+        S.alert = None
     if S.mode == "stopped" and S.alert and (
             "平仓未完成" in S.alert or "残腿未能全平" in S.alert or
             "Unknown account/order" in S.alert or "Order outcome unknown" in S.alert or
