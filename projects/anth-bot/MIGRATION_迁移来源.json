@@ -6,7 +6,7 @@
       "source": "bot.py",
       "source_sha256": "6e7c61daa866ce0f5f7e28571f2518fa5826a2ce8b5f1dae3a0813d402fc4494",
       "target": "bot.py",
-      "target_sha256": "c5b5c80d1a9c8201c6ea780fbc716aa1e4cb79a4e30c5e74de377adfe6a4a895"
+      "target_sha256": "28eb033a3c549533f60837875c0ecfd2cf856e9358cccb58cba5d764edcd4443"
     },
     {
       "source": "simtest.py",
@@ -18,7 +18,7 @@
       "source": "control.html",
       "source_sha256": "e903a45ec67f2d92c0fa3b1d8f106e9cbf8fe77f19558a3656628242586a312a",
       "target": "control.html",
-      "target_sha256": "dd5e7dc531303dfc51dfd836a5919fea2b0d113e7defb778c09acc039a4be3c3"
+      "target_sha256": "29b47a79c2424926d28a6e0587e6f79ef424d277e468f481e1863a47ced216fc"
     }
   ],
   "excluded": [
@@ -33,5 +33,5 @@
     "historical fills and account tests"
   ],
   "production_modified": false,
-  "maintenance_note": "Execution-safety logic synchronized; public archive remains offline-only. Source hashes describe original migration snapshot; target hashes describe maintained public files."
+  "maintenance_note": "Stopped-mode read-only cashflow and flat reconcile were added in the public archive only. Source hash remains the original migration snapshot. Target hash is the maintained offline file. Do not copy it over production."
 }
