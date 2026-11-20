@@ -40,6 +40,10 @@ table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:
 <div class="tw" style="margin-top:8px"><table><thead><tr><th>轮次</th><th>开仓时间(北京)</th><th>方向</th><th>持仓</th><th>实际入场价差</th><th>实际出场价差</th><th>收益 bp</th><th>实际收益 U</th><th>余额变化 U</th><th>盘口估算 U</th><th>手续费</th><th>出场原因</th><th>类型</th></tr></thead><tbody id="tb"></tbody></table></div>
 <div class="row" style="margin-top:6px"><button id="clear">清空记录</button></div></div>
 <div class="card"><h2>下单 / 成交日志</h2><div class="tw"><table><thead><tr><th>时间(北京)</th><th>类型</th><th>内容</th></tr></thead><tbody id="ol"></tbody></table></div></div>
+<div class="card"><h2>两所合计亏损上限</h2>
+<div class="s">从首次记录或你确认重置基线时的两所官方账户权益合计起算。净亏损包含已实现、未实现、手续费和资金费。能识别的充值、提现和内部划转会按资金进出调整。识别不了、两边时间不一致，或权益字段缺失时，显示数据异常并停止新开仓，不会用本地盈亏或余额代替权益。达到上限只停止新开仓；已有持仓仍按止损、回归和到时规则退出。这不是亏损硬封顶，也不保证最多只亏这个数。</div>
+<div id="lossBox" class="s" style="color:var(--tx);margin-top:8px">—</div>
+<div class="row" style="margin-top:8px"><label class="s">上限 U<input id="lossLimit" type="number" min="0" step="0.01" style="max-width:140px"></label><button id="lossSave" type="button">保存金额</button><button id="lossReset" type="button">重置亏损基线</button><span class="s" id="lossMsg"></span></div></div>
 <div class="card"><h2>参数（保存在服务器）</h2><div class="cfg" id="cfg"></div><div class="row" style="margin-top:8px"><button id="save">保存参数</button><span class="s" id="cmsg"></span></div></div>
 <div class="card"><h2>访问令牌</h2><div class="row"><input id="tok" type="password" placeholder="服务器 .env 中的访问令牌（本仓库不含配置）" style="max-width:320px"><button id="tokSave">保存</button></div><div class="s">令牌只存在这个浏览器里，用来证明是你在操作。交易所密钥只放在服务器 .env，网页拿不到。</div></div>
 </div>
@@ -68,16 +72,22 @@ function draw(d){const L=d.live||{};
  const w=T.filter(r=>r.u>0).length,net=T.reduce((a,r)=>a+(r.u||0),0),vol=T.reduce((a,r)=>a+(r.vol||0),0),cap=2*d.cfg.margin;
  $("tot").innerHTML=`<div><div class="k">轮次</div><div class="v">${T.length}（${w}胜${T.length-w}负）</div></div><div><div class="k">净收益（实际成交）</div><div class="v ${cls(net)}">${sg(net,2)}U</div></div><div><div class="k">收益率</div><div class="v ${cls(net)}">${sg(net/cap*100,2)}%</div></div><div><div class="k">成交量</div><div class="v">${(vol/1e4).toFixed(2)}万U</div></div>`;
  $("ol").innerHTML=d.olog.slice().reverse().map(e=>`<tr><td>${bj(e.t)}</td><td class="${e.kind==="err"?"neg":e.kind==="fill"?"pos":""}">${e.kind}</td><td style="white-space:normal">${e.msg}${e.resp?" "+JSON.stringify(e.resp).slice(0,200):""}${e.error?" ❌"+e.error:""}</td></tr>`).join("");
+ const loss=d.loss||{};$("lossBox").textContent=lossText(loss);if(document.activeElement!==$("lossLimit")&&loss.limitUsd!=null)$("lossLimit").value=loss.limitUsd;
  if(!cfgDrawn){$("cfg").innerHTML=META.map(([k,l])=>`<label>${l}<input id="c_${k}" type="number" step="any" value="${d.cfg[k]}"></label>`).join("");cfgDrawn=true}
  const S=d.series,W=d.cfg.medMin*60000,M=[];for(let i=0;i<S.length;i++){const a=S.filter(x=>x[0]>S[i][0]-W&&x[0]<=S[i][0]).map(x=>x[1]).sort((x,y)=>x-y);if(a.length)M.push({x:S[i][0],y:a[Math.floor(a.length/2)]})}
  const ds=chart.data.datasets;ds[0].data=S.map(x=>({x:x[0],y:x[1]}));ds[1].data=M;ds[2].data=M.map(m=>({x:m.x,y:m.y+d.cfg.openBp}));ds[3].data=M.map(m=>({x:m.x,y:m.y-d.cfg.openBp}));chart.update("none")}
 chart=new Chart($("ch"),{type:"line",data:{datasets:[{label:"价差",data:[],borderColor:"#58a6ff",pointRadius:0,borderWidth:1.2},{label:"中位数",data:[],borderColor:"#d29922",pointRadius:0,borderWidth:1.2},{label:"上轨",data:[],borderColor:"rgba(248,81,73,.5)",borderDash:[4,4],pointRadius:0,borderWidth:1},{label:"下轨",data:[],borderColor:"rgba(63,185,80,.5)",borderDash:[4,4],pointRadius:0,borderWidth:1}]},options:{animation:false,maintainAspectRatio:false,parsing:false,scales:{x:{type:"linear",ticks:{color:"#8b949e",callback:v=>new Date(v).toLocaleTimeString("zh-CN",{timeZone:"Asia/Shanghai",hour:"2-digit",minute:"2-digit",hour12:false})}},y:{ticks:{color:"#8b949e"}}},plugins:{legend:{labels:{color:"#c9d1d9"}}}}});
-async function loop(){try{draw(await api("/api/state"))}catch(e){$("banner").textContent="连不上机器人："+e.message}}
+let lastState=null;
+function lossText(L){const f=x=>x==null||!isFinite(Number(x))?"—":Number(x).toFixed(2);const when=x=>x?bj(x):"—";
+ return `基线时间 ${when(L.baselineAt)} ｜ 当前两所合计权益 ${f(L.equityTotal)} U ｜ 累计净亏损 ${f(L.netLoss)} U ｜ 上限 ${f(L.limitUsd)} U ｜ ${L.triggered?"已触发，停止新开仓":L.ready?"未触发":"未就绪"}`+(L.anomaly?` ｜ ${L.anomaly}`:"");}
+async function loop(){try{lastState=await api("/api/state");draw(lastState)}catch(e){$("banner").textContent="连不上机器人："+e.message}}
 setInterval(loop,2000);loop();
 $("tokSave").onclick=()=>{tok=$("tok").value.trim();localStorage.setItem("anthbot.tok",tok);loop()};
 async function setMode(m){if(m==="live"&&!confirm("确定切到实盘？机器人会用你的真实资金自动下单。"))return;const r=await api("/api/mode",{mode:m});if(!r.ok)alert(r.err);loop()}
 $("mPaper").onclick=()=>setMode("paper");$("mLive").onclick=()=>setMode("live");$("mStop").onclick=()=>setMode("stopped");
 $("kill").onclick=async()=>{if(!confirm("一键全平两边 ANTH 持仓并停止机器人？"))return;const r=await api("/api/kill",{});alert(r.alert||"已全平并停止");loop()};
 $("save").onclick=async()=>{const b={};META.forEach(([k])=>b[k]=parseFloat($("c_"+k).value));await api("/api/cfg",b);$("cmsg").textContent="已保存"};
+$("lossSave").onclick=async()=>{const r=await api("/api/loss-limit",{limitUsd:$("lossLimit").value});$("lossMsg").textContent=r.ok?"金额已保存":(r.err||"保存失败");if(!r.ok)alert(r.err||"保存失败");loop()};
+$("lossReset").onclick=async()=>{const L=(lastState&&lastState.loss)||{};if(!confirm("确认重置亏损基线？这不会自动切回实盘。\n"+lossText(L)))return;const r=await api("/api/loss-baseline/reset",{confirm:true});$("lossMsg").textContent=r.ok?"基线已重置":(r.err||"未能重置");if(!r.ok)alert(r.err||"未能重置");loop()};
 $("clear").onclick=async()=>{if(!confirm("清空成交记录？"))return;const r=await api("/api/clear",{});if(!r.ok)alert(r.err);loop()};
 </script></body></html>

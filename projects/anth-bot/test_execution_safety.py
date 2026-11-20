@@ -11,6 +11,7 @@ REAL_SLEEP=asyncio.sleep
 class ExecutionTests(unittest.IsolatedAsyncioTestCase):
  async def asyncSetUp(self):
   bot.DRY_RUN=False;bot.LEVERAGE=2;Path(bot.STATE_F).unlink(missing_ok=True);bot.S=bot.State();s=bot.S;s.pos={'live':True,'dir':'S','qIo':.174,'qLt':.174,'dryIo':0,'dryLt':0};s.mode='live';s.intents=[];s.recovery=False;s.exit_pending=None;s.alert=None;s.actual=None;s.cfg['retries']=0
+  now=bot.now_ms();bot.observe_loss_sample(100,100,now,now,0.0,now)
   self.v=bot.Venues();bot.V=self.v;self.v.ready=True;self.v.hl_addr='test-account';self.v.lt_idx=123
   self.q=[0.,0.];self.sent=[];self.first='full';self.second='full';self.block_after_first=False
   self.v.positions=AsyncMock(side_effect=self.positions);self.v.lookup_order=AsyncMock(side_effect=self.lookup)

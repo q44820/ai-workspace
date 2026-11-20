@@ -53,6 +53,67 @@ DRY_CASH = dict(io=float(ENV("DRY_CASH_IO", "100")), lt=float(ENV("DRY_CASH_LT",
 def now_ms(): return int(time.time() * 1000)
 def bj(ms): return time.strftime("%m-%d %H:%M:%S", time.gmtime(ms / 1000 + 8 * 3600))
 
+def official_evidence(evidence):
+    return isinstance(evidence, dict) and evidence.get("source") in ("official-submission", "official-order")
+
+def order_outcome_unknown(intent):
+    """True only when a submission may exist and no official terminal evidence does.
+
+    terminal_wait with official evidence means the order outcome is known and the
+    later position snapshot does not match that order's old pre-trade expectation.
+    That is not an in-flight unknown submission.
+    """
+    if not isinstance(intent, dict):
+        return True
+    if intent.get("status") in ("rejected", "terminal_dry", "terminal"):
+        return False
+    if intent.get("status") == "terminal_wait" and official_evidence(intent.get("terminal_evidence")):
+        return False
+    return True
+
+LOSS_LIMIT_DEFAULT = 5.0
+LOSS_LIMIT_MAX = 100000.0
+EQUITY_SKEW_MS = 2000
+EQUITY_MAX_AGE_MS = 15000
+
+def finite_num(value):
+    if isinstance(value, bool) or isinstance(value, (list, dict)) or value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+def default_loss_state():
+    return dict(enabled=True, limitUsd=LOSS_LIMIT_DEFAULT, baseline=None, triggered=False,
+                triggeredAt=None, triggeredLoss=None, resetAt=None, ready=False, anomaly="亏损基线未初始化",
+                netLoss=None, last=None)
+
+def normalize_loss_state(raw):
+    """Reload a persisted loss latch without treating a restart as a new baseline."""
+    state = default_loss_state()
+    if not isinstance(raw, dict):
+        return state
+    limit = finite_num(raw.get("limitUsd"))
+    if limit is not None and 0 < limit <= LOSS_LIMIT_MAX:
+        state["limitUsd"] = limit
+    base = raw.get("baseline")
+    if (isinstance(base, dict) and all(finite_num(base.get(k)) is not None for k in ("io", "lt", "total"))
+            and isinstance(base.get("t"), (int, float)) and math.isfinite(base["t"])):
+        state["baseline"] = dict(io=float(base["io"]), lt=float(base["lt"]), total=float(base["total"]), t=int(base["t"]))
+        state["anomaly"] = "权益尚未刷新"
+    state["triggered"] = raw.get("triggered") is True
+    if state["triggered"]:
+        state["triggeredAt"] = int(raw["triggeredAt"]) if isinstance(raw.get("triggeredAt"), (int, float)) and math.isfinite(raw["triggeredAt"]) else None
+        state["triggeredLoss"] = finite_num(raw.get("triggeredLoss"))
+    if isinstance(raw.get("resetAt"), (int, float)) and math.isfinite(raw["resetAt"]):
+        state["resetAt"] = int(raw["resetAt"])
+    state["ready"] = False
+    return state
+
 # ---------------- 状态 ----------------
 class State:
     def __init__(self):
@@ -70,8 +131,9 @@ class State:
         self.last_actual = d.get("last_actual")
         self.actual = None  # restart invalidates current knowledge, retains last observation
         self.recovery = bool(d.get("recovery") or (not self.pos and (self.exit_pending or
-                             any(i.get("status") not in ("rejected", "terminal_dry", "terminal") for i in self.intents))))
+                             any(order_outcome_unknown(i) for i in self.intents))))
         self.recovery_reduce_allowed = d.get("recovery_reduce_allowed") is True
+        self.loss = normalize_loss_state(d.get("loss"))
         if self.recovery: self.mode = "stopped"
     def save(self):
         lim = now_ms() - 8 * 3600e3
@@ -81,7 +143,7 @@ class State:
                                        olog=self.olog[-500:], buckets=self.buckets, alert=self.alert,
                                        exit_pending=self.exit_pending, intents=self.intents, recovery=self.recovery,
                                        recovery_reduce_allowed=self.recovery_reduce_allowed,
-                                       last_actual=self.last_actual), allow_nan=False))
+                                       last_actual=self.last_actual, loss=self.loss), allow_nan=False))
         with tmp.open("rb") as f: os.fsync(f.fileno())
         tmp.replace(STATE_F)
         fd = os.open(str(STATE_F.parent), os.O_RDONLY)
@@ -163,6 +225,88 @@ ACCOUNT_READ_TIMEOUT = 4.0  # Finite transport timeout; requests is not an exact
 BAL = {}
 async def hl_post(s, body):
     async with s.post(HL_INFO, json=body) as r: return await r.json()
+
+def lighter_usdc_asset_id():
+    """USDC asset id published by the installed SignerClient. Missing constant fails closed."""
+    try:
+        import lighter
+        value = getattr(lighter.SignerClient, "ASSET_ID_USDC", None)
+        if type(value) is int and value > 0:
+            return value
+    except Exception:
+        return None
+    return None
+
+def _history_page(payload, key):
+    if hasattr(payload, "to_dict"):
+        payload = payload.to_dict()
+    if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+        return None
+    rows = []
+    for row in payload[key]:
+        if hasattr(row, "to_dict"):
+            row = row.to_dict()
+        if not isinstance(row, dict):
+            return None
+        rows.append(row)
+    cursor = payload.get("cursor") or ""
+    if not isinstance(cursor, str):
+        return None
+    return rows, cursor
+
+async def _lighter_history(method, key, **kwargs):
+    client = getattr(V, "lt", None)
+    tx_api = getattr(client, "tx_api", None)
+    if tx_api is None or not hasattr(tx_api, method):
+        return None
+    pair = client.create_auth_token_with_expiry()
+    if not isinstance(pair, tuple) or len(pair) != 2 or pair[1] or not isinstance(pair[0], str) or not pair[0]:
+        return None
+    rows, cursor = [], None
+    for _ in range(8):
+        call = dict(kwargs)
+        if cursor:
+            call["cursor"] = cursor
+        call["authorization"] = pair[0]
+        page = _history_page(await getattr(tx_api, method)(**call), key)
+        if page is None:
+            return None
+        chunk, cursor = page
+        rows.extend(chunk)
+        if not cursor:
+            return rows
+    return None
+
+async def external_inflow(session, since_ms, l1_address):
+    """Signed external cash since the baseline. None means the ledger could not be verified."""
+    try:
+        addr = ENV("HL_ACCOUNT_ADDRESS", "")
+        if not (isinstance(addr, str) and addr.startswith("0x") and len(addr) == 42):
+            return None
+        hl = await hl_post(session, {"type": "userNonFundingLedgerUpdates", "user": addr, "startTime": int(since_ms)})
+        hl_flow = classify_hl_cashflow(hl if isinstance(hl, list) else None, addr)
+        asset = lighter_usdc_asset_id()
+        if hl_flow is None or asset is None or not isinstance(l1_address, str) or not l1_address:
+            return None
+        account = int(ENV("LIGHTER_ACCOUNT_INDEX", "0") or 0)
+        deposits = await _lighter_history("deposit_history", "deposits", account_index=account, l1_address=l1_address)
+        withdraws = await _lighter_history("withdraw_history", "withdraws", account_index=account)
+        transfers = await _lighter_history("transfer_history", "transfers", account_index=account)
+        lt_flow = classify_lt_cashflow(deposits, withdraws, transfers, account, asset, since_ms)
+        if None in (deposits, withdraws, transfers, lt_flow):
+            return None
+        return hl_flow + lt_flow
+    except Exception:
+        return None
+
+async def note_official_equity(session):
+    """Arm or refresh the loss baseline from the balances just read. Fail closed on a bad pair or ledger."""
+    io, lt = BAL.get("io") or {}, BAL.get("lt") or {}
+    io_eq = hl_equity_value(io.get("mode"), io.get("mainValue"), io.get("ioValue"), io.get("usdc"))
+    since = (S.loss.get("baseline") or {}).get("t")
+    inflow = 0.0 if not since else await external_inflow(session, since, lt.get("l1"))
+    observe_loss_sample(io_eq, lt.get("equity"), io.get("t") or 0, lt.get("t") or 0, inflow)
+
 async def poll_balances():
     """只读：两边余额 + 密钥是否匹配。统一账户的 USDC 在 spot 里，io dex 显示 0 是正常的。"""
     keychk = False
@@ -177,8 +321,15 @@ async def poll_balances():
                     usdc = next((b for b in sp.get("balances", []) if b["coin"] == "USDC"), {"total": "0", "hold": "0"})
                     ap = next((a["position"] for a in io.get("assetPositions", []) if a["position"]["coin"] == COIN), {})
                     pos = float(ap.get("szi", 0) or 0); liqIo = float(ap["liquidationPx"]) if ap.get("liquidationPx") else None
+                    main_value = None
+                    try:
+                        main = await hl_post(s, {"type": "clearinghouseState", "user": addr})
+                        main_value = main["marginSummary"]["accountValue"]
+                    except Exception:
+                        main_value = None
                     BAL["io"] = dict(usdc=float(usdc["total"]), hold=float(usdc["hold"]), ioValue=float(io["marginSummary"]["accountValue"]),
-                                     mode=ab, pos=pos, liq=liqIo, t=now_ms())
+                                     mainValue=None if finite_num(main_value) is None else float(main_value),
+                                     mode=ab if isinstance(ab, str) else None, pos=pos, liq=liqIo, t=now_ms())
                     if not keychk and ENV("HL_API_PRIVATE_KEY"):
                         from eth_account import Account
                         ag = Account.from_key(ENV("HL_API_PRIVATE_KEY")).address.lower()
@@ -189,7 +340,11 @@ async def poll_balances():
                     lp = next((p for p in a.get("positions", []) if p["market_id"] == MID), {})
                     pos = float(lp.get("position", 0) or 0) * int(lp.get("sign", 1) or 1)
                     liqLt = float(lp["liquidation_price"]) if pos and float(lp.get("liquidation_price") or 0) > 0 else None
-                    BAL["lt"] = dict(collateral=float(a.get("collateral", 0)), avail=float(a.get("available_balance", 0)), pos=pos, liq=liqLt, t=now_ms())
+                    BAL["lt"] = dict(collateral=float(a.get("collateral", 0)), avail=float(a.get("available_balance", 0)),
+                                     equity=finite_num(a.get("total_asset_value")), l1=a.get("l1_address") if isinstance(a.get("l1_address"), str) else None,
+                                     pos=pos, liq=liqLt, t=now_ms())
+                if not DRY_RUN and BAL.get("io") and BAL.get("lt"):
+                    await note_official_equity(s)
             if not keychk and li and ENV("LIGHTER_API_PRIVATE_KEY") and ENV("LIGHTER_API_KEY_INDEX"):
                 import lighter
                 c = lighter.SignerClient(url=LT_URL, account_index=int(li), api_private_keys={int(ENV("LIGHTER_API_KEY_INDEX")): ENV("LIGHTER_API_PRIVATE_KEY")})
@@ -464,26 +619,41 @@ class Venues:
             await asyncio.sleep(min(self.ack_interval, remaining))
 
     async def reconcile_orders(self, exposure):
-        """Release only mapped terminal evidence AND matching current actual exposure.
-        Absence, lookup errors, expired history and lagged positions retain the barrier.
+        """Map official order evidence without reopening a later-settled historical order.
+
+        The current net position is the expected position only for the latest intent on
+        that venue. An older filled order stays done after a later order; it is not
+        rewritten to terminal_wait just because the account is now flat. Official
+        evidence already stored is not erased. A local terminal flag with no official
+        evidence is not trusted when that intent is still the latest one and the
+        official read does not confirm it. Lookup misses do not invent fills.
         """
         if DRY_RUN or not positions_known(*exposure[:2]): return
-        for i in S.intents:
-            if i.get("status") in ("terminal", "terminal_dry", "rejected"):
-                if i.get("status") == "terminal_dry" or official_evidence(i.get("terminal_evidence")):
-                    continue
-                i["status"] = "unknown"
-                i.pop("terminal_evidence", None)
+        for i in list(S.intents):
+            if i.get("status") == "terminal_dry":
+                continue
+            previous_status = i.get("status")
+            prior = i.get("terminal_evidence") if isinstance(i.get("terminal_evidence"), dict) else None
+            historical = later_intent_on_venue(i)
+            if previous_status in ("terminal", "rejected") and official_evidence(prior):
+                continue
+            if historical and previous_status == "terminal_wait" and official_evidence(prior):
+                i["status"] = "terminal"
+                i["position_note"] = "later-order-supersedes-pre-fill"
+                try: S.save()
+                except BaseException:
+                    i["status"] = previous_status
+                    raise
+                continue
+            if historical and previous_status in ("terminal", "rejected"):
+                # Expired history queries must not downgrade or wipe a settled record.
+                continue
             venue = i.get("venue")
             if venue not in ("io", "lt") or not i.get("official_id") or "pre" not in i: continue
             account = self.hl_addr if venue == "io" else self.lt_idx
             if i.get("account") != account or i.get("market") != (COIN if venue == "io" else MID): continue
-            evidence = i.get("terminal_evidence")
-            if evidence is not None and not official_evidence(evidence):
-                i.pop("terminal_evidence", None)
-                evidence = None
+            evidence = prior if official_evidence(prior) else None
             if evidence is None:
-                # A per-intent monotonic deadline also limits repeated ticks and concurrent reads.
                 t = time.monotonic()
                 if t < self._lookup_at.get(i["id"], 0): continue
                 self._lookup_at[i["id"]] = t + 2.0
@@ -491,22 +661,40 @@ class Venues:
                     result = await asyncio.wait_for(self.lookup_order(i), self.lookup_timeout)
                     evidence = order_evidence(i, result)
                 except Exception:
-                    continue  # deliberately never include auth/SDK exception text in logs
-                if evidence is None: continue
+                    continue
+                if evidence is None:
+                    if previous_status in ("terminal", "rejected") and not historical:
+                        if settled_flat_close(i, exposure):
+                            continue
+                        if prior is not None: i["prior_evidence"] = prior
+                        i["status"] = "unknown"
+                        i.pop("terminal_evidence", None)
+                        try: S.save()
+                        except BaseException:
+                            i["status"] = previous_status
+                            if prior is not None: i["terminal_evidence"] = prior
+                            raise
+                    continue
                 i["terminal_evidence"] = evidence
             if evidence.get("oid") is not None: i["oid"] = evidence["oid"]
+            if historical:
+                i["status"] = "rejected" if evidence.get("state") in ("rejected", "iocCancelRejected") and not evidence.get("filled") else "terminal"
+                try: S.save()
+                except BaseException:
+                    i["status"] = previous_status
+                    if prior is None: i.pop("terminal_evidence", None)
+                    else: i["terminal_evidence"] = prior
+                    raise
+                continue
             signed = evidence["filled"] * (1 if i["direction"] == "buy" else -1)
             actual = exposure[0 if venue == "io" else 1]
             expected = i["pre"][venue] + signed
-            # Tight representation tolerance, never a trading-size/dust tolerance.
-            if not math.isclose(actual, expected, rel_tol=0, abs_tol=1e-9):
-                i["status"] = "terminal_wait"
-            else:
-                i["status"] = "terminal"
+            i["status"] = "terminal" if math.isclose(actual, expected, rel_tol=0, abs_tol=1e-9) else "terminal_wait"
             try: S.save()
             except BaseException:
-                i["status"] = "unknown"
-                i.pop("terminal_evidence", None)
+                i["status"] = previous_status
+                if prior is None: i.pop("terminal_evidence", None)
+                else: i["terminal_evidence"] = prior
                 raise
 
     def track_start(self):
@@ -614,7 +802,14 @@ class Venues:
         await self.reconcile_orders((pio, plt))
         if unknown_orders():
             S.alert = "Unknown order outcome: manual review required; resend prohibited"
-            S.exit_pending = dict(submitted=True, why=tag)
+            # This return is before any new submission. Do not label the attempt as sent
+            # just because an older intent is unresolved.
+            since = (S.pos or {}).get("t") or 0
+            sent_this = any(isinstance(i.get("t"), (int, float)) and i["t"] >= since and i.get("submitted") for i in S.intents)
+            if sent_this:
+                S.exit_pending = dict(submitted=True, why=tag, phase="submitted_unknown", t=(S.exit_pending or {}).get("t") or now_ms())
+            else:
+                S.exit_pending = dict(submitted=False, why=tag, phase="not_sent", t=now_ms())
             S.save()
             return False
         if not reduce and S.mode == "stopped":
@@ -644,6 +839,13 @@ class Venues:
             S.alert = "Needed leg has no reliable fresh quote; exposure retained"
             S.save()
             return False
+        if not reduce:
+            blocked, why = loss_blocks_open()
+            if blocked:
+                S.alert = why
+                self.last_drive["phase"] = "not_sent"
+                S.save()
+                return False
         # One submission per leg only. Account snapshots cannot establish order finality.
         sent_ids = []
         for leg, delta, book in needed:
@@ -876,14 +1078,296 @@ def lighter_submission(tx, resp, err):
                 or (err is None and type(code) is int and code != 200))
     return dict(rejected=rejected, tx_hash=h, accepted=err is None and type(code) is int and code == 200, code=code)
 
-def official_evidence(evidence):
-    return isinstance(evidence, dict) and evidence.get("source") in ("official-submission", "official-order")
+def later_intent_on_venue(intent):
+    """True when a newer intent on the same venue supersedes this order's immediate position."""
+    if not isinstance(intent, dict):
+        return False
+    venue = intent.get("venue")
+    t = intent.get("t") or 0
+    return any(other is not intent and isinstance(other, dict) and other.get("venue") == venue
+               and (other.get("t") or 0) > t for other in S.intents)
+
+def settled_flat_close(intent, exposure):
+    """A completed close whose venue is already flat, with an earlier same-size terminal.
+
+    An aged-out official read must not turn that settled close back into an unknown
+    order. A latest open, a non-flat account, or a close with no matching earlier
+    fill is still untrusted when the official read is empty.
+    """
+    if not isinstance(intent, dict) or not (intent.get("reduce") or intent.get("purpose") == "平仓"):
+        return False
+    venue = intent.get("venue")
+    index = 0 if venue == "io" else 1 if venue == "lt" else None
+    if index is None or not positions_known(*exposure[:2]) or not math.isclose(exposure[index], 0, rel_tol=0, abs_tol=1e-9):
+        return False
+    evidence = intent.get("terminal_evidence") if isinstance(intent.get("terminal_evidence"), dict) else None
+    filled = finite_num(evidence.get("filled")) if evidence else None
+    if filled is None or filled <= 0:
+        return False
+    t = intent.get("t") or 0
+    return any(other is not intent and isinstance(other, dict) and other.get("venue") == venue
+               and other.get("status") in ("terminal", "rejected") and (other.get("t") or 0) < t
+               and math.isclose(finite_num((other.get("terminal_evidence") or {}).get("filled")) or -1, filled, rel_tol=0, abs_tol=1e-9)
+               for other in S.intents)
 
 def positions_known(*values):
     return all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in values)
 
 def unknown_orders():
     return any(i.get("status") not in ("rejected", "terminal_dry", "terminal") for i in S.intents)
+
+def loss_blocks_open():
+    """Block a new entry when the combined-equity limit is latched, stale, or not initialized.
+
+    The public DRY_RUN simulator has no official bilateral equity, so it does not
+    arm this gate. A production process with DRY_RUN off does.
+    """
+    if DRY_RUN:
+        return False, None
+    if latch_loss_trigger():
+        return True, "两所合计净亏损已达上限，已停止新开仓；已有持仓仍按止损、回归和到时退出"
+    if not S.loss.get("ready") or S.loss.get("anomaly") or not S.loss.get("baseline"):
+        return True, S.loss.get("anomaly") or "两所权益基线未就绪，禁止新开仓"
+    return False, None
+
+def hl_equity_value(mode, main_value, io_value, spot_usdc):
+    """Official equity, never a sum of unrelated balances.
+
+    unifiedAccount / portfolioMargin: Hyperliquid documents the spot clearinghouse
+    as the source of truth and says perp dex states are not meaningful.
+    disabled / default: perp marginSummary.accountValue on each dex, spot not added.
+    Any other mode fails closed.
+    """
+    if mode in ("unifiedAccount", "portfolioMargin"):
+        return finite_num(spot_usdc)
+    if mode in ("disabled", "default"):
+        main, io = finite_num(main_value), finite_num(io_value)
+        if main is None or io is None:
+            return None
+        return main + io
+    return None
+
+def fresh_equity_pair(io_eq, lt_eq, io_t, lt_t, now):
+    io_eq, lt_eq = finite_num(io_eq), finite_num(lt_eq)
+    if None in (io_eq, lt_eq) or not all(isinstance(t, (int, float)) and math.isfinite(t) for t in (io_t, lt_t, now)):
+        return None
+    if abs(io_t - lt_t) > EQUITY_SKEW_MS or now - io_t > EQUITY_MAX_AGE_MS or now - lt_t > EQUITY_MAX_AGE_MS:
+        return None
+    return dict(io=io_eq, lt=lt_eq, total=io_eq + lt_eq, t=int(min(io_t, lt_t)))
+
+def observe_loss_sample(io_eq, lt_eq, io_t, lt_t, inflow, now=None):
+    """Record official bilateral equity. inflow is signed external cash since the baseline, or None if unverified."""
+    now = now_ms() if now is None else now
+    pair = fresh_equity_pair(io_eq, lt_eq, io_t, lt_t, now)
+    if pair is None or finite_num(inflow) is None:
+        S.loss["anomaly"] = "权益或现金流数据异常，需人工核对基线"
+        S.loss["ready"] = False
+        S.loss["last"] = None
+        return S.loss
+    inflow = float(inflow)
+    S.loss["anomaly"] = None
+    S.loss["last"] = dict(io=pair["io"], lt=pair["lt"], total=pair["total"], t=int(now), inflow=inflow)
+    if not S.loss.get("baseline"):
+        S.loss["baseline"] = dict(io=pair["io"], lt=pair["lt"], total=pair["total"], t=int(now))
+        S.loss["netLoss"] = 0.0
+        S.loss["ready"] = True
+        S.save()
+        return S.loss
+    # Loss = baseline equity minus current equity, plus signed deposits (withdrawals negative).
+    S.loss["netLoss"] = (S.loss["baseline"]["total"] + inflow) - pair["total"]
+    S.loss["ready"] = True
+    latch_loss_trigger(now)
+    return S.loss
+
+def latch_loss_trigger(now=None):
+    if S.loss.get("triggered"):
+        return True
+    net = finite_num(S.loss.get("netLoss"))
+    if not S.loss.get("ready") or S.loss.get("anomaly") or net is None:
+        return False
+    if net + 1e-9 < float(S.loss["limitUsd"]):
+        return False
+    now = now_ms() if now is None else now
+    S.loss["triggered"] = True
+    S.loss["triggeredAt"] = int(now)
+    S.loss["triggeredLoss"] = float(net)
+    S.save()
+    return True
+
+def parse_loss_limit(value):
+    number = finite_num(value)
+    if number is None or number <= 0 or number > LOSS_LIMIT_MAX:
+        raise ValueError("金额必须是大于 0 且不超过 100000 的有限数字")
+    return float(number)
+
+def set_loss_limit(limit, now=None):
+    """Persist the amount. A lower limit latches immediately. A higher limit does not unlock or change mode."""
+    mode = S.mode
+    S.loss["limitUsd"] = float(limit)
+    if not S.loss.get("triggered"):
+        latch_loss_trigger(now)
+    S.save()
+    S.mode = mode
+    return S.loss
+
+def reset_loss_baseline(now=None):
+    """Explicit baseline reset. Does not change mode and refuses without a fresh verified sample."""
+    clock = now_ms()
+    now = clock if now is None else now
+    last = S.loss.get("last")
+    if S.loss.get("anomaly") or not isinstance(last, dict) or clock - last.get("t", 0) > EQUITY_MAX_AGE_MS:
+        return False
+    mode = S.mode
+    S.loss["baseline"] = dict(io=last["io"], lt=last["lt"], total=last["total"], t=int(now))
+    S.loss["triggered"] = False
+    S.loss["triggeredAt"] = None
+    S.loss["triggeredLoss"] = None
+    S.loss["netLoss"] = 0.0
+    S.loss["resetAt"] = int(now)
+    S.loss["ready"] = True
+    S.loss["anomaly"] = None
+    S.save()
+    S.mode = mode
+    return True
+
+def loss_view():
+    last = S.loss.get("last") or {}
+    base = S.loss.get("baseline") or {}
+    return dict(limitUsd=S.loss.get("limitUsd"), triggered=bool(S.loss.get("triggered")),
+                ready=bool(S.loss.get("ready")) and not S.loss.get("anomaly"), anomaly=S.loss.get("anomaly"),
+                netLoss=S.loss.get("netLoss"), baselineAt=base.get("t"), baselineTotal=base.get("total"),
+                equityIo=last.get("io"), equityLt=last.get("lt"), equityTotal=last.get("total"), equityAt=last.get("t"),
+                resetAt=S.loss.get("resetAt"))
+
+def classify_hl_cashflow(entries, address):
+    """Signed external USDC flow. Unknown ledger types fail closed. None means unverified."""
+    if not isinstance(entries, list) or not isinstance(address, str):
+        return None
+    total = 0.0
+    address = address.lower()
+    for entry in entries:
+        delta = entry.get("delta") if isinstance(entry, dict) else None
+        if not isinstance(delta, dict):
+            return None
+        kind, amount = delta.get("type"), finite_num(delta.get("usdc"))
+        if amount is None:
+            return None
+        if kind == "deposit":
+            total += amount
+        elif kind == "withdraw":
+            total -= amount
+        elif kind in ("internalTransfer", "subAccountTransfer"):
+            user, dest = str(delta.get("user") or "").lower(), str(delta.get("destination") or "").lower()
+            if not user or not dest or user == dest:
+                return None
+            if dest == address and user != address:
+                total += amount
+            elif user == address and dest != address:
+                total -= amount
+            else:
+                return None
+        else:
+            return None
+    return total
+
+def classify_lt_cashflow(deposits, withdraws, transfers, account_index, usdc_asset_id, since_ms):
+    """Signed Lighter USDC flow since baseline. Pending or unknown rows fail closed."""
+    try:
+        return _classify_lt_cashflow(deposits, withdraws, transfers, account_index, usdc_asset_id, since_ms)
+    except (TypeError, ValueError):
+        return None
+
+def _classify_lt_cashflow(deposits, withdraws, transfers, account_index, usdc_asset_id, since_ms):
+    account_index = int(account_index)
+    usdc_asset_id = int(usdc_asset_id)
+    total = 0.0
+    def stamp(value):
+        number = finite_num(value)
+        if number is None or number < 1_000_000_000:
+            return None
+        return number * 1000 if number < 10_000_000_000 else number
+    for row in deposits or []:
+        if not isinstance(row, dict) or row.get("asset_id") is None:
+            return None
+        if int(row.get("asset_id")) != usdc_asset_id:
+            continue
+        when = stamp(row.get("timestamp"))
+        if when is None or when < since_ms:
+            continue
+        status, amount = row.get("status"), finite_num(row.get("amount"))
+        if amount is None:
+            return None
+        if status == "completed":
+            total += amount
+        elif status == "failed":
+            continue
+        else:
+            return None
+    for row in withdraws or []:
+        if not isinstance(row, dict) or row.get("asset_id") is None:
+            return None
+        if int(row.get("asset_id")) != usdc_asset_id:
+            continue
+        when = stamp(row.get("timestamp"))
+        if when is None or when < since_ms:
+            continue
+        status, amount = row.get("status"), finite_num(row.get("amount"))
+        if amount is None:
+            return None
+        if status == "completed":
+            total -= amount
+        elif status in ("failed", "refunded"):
+            continue
+        else:
+            return None
+    for row in transfers or []:
+        if not isinstance(row, dict) or row.get("asset_id") is None:
+            return None
+        if int(row.get("asset_id")) != usdc_asset_id:
+            continue
+        when = stamp(row.get("timestamp"))
+        if when is None or when < since_ms:
+            continue
+        if finite_num(row.get("fee")) not in (0, 0.0):
+            return None
+        kind, amount = row.get("type"), finite_num(row.get("amount"))
+        if not isinstance(kind, str) or amount is None or kind == "L2SelfTransfer":
+            return None
+        if kind.endswith("Inflow") and int(row.get("to_account_index", -1)) == account_index:
+            total += amount
+        elif kind.endswith("Outflow") and int(row.get("from_account_index", -1)) == account_index:
+            total -= amount
+        else:
+            return None
+    return total
+
+def audit_restore_intent(current, backup, official_fill=None):
+    """Restore one historical intent only when backup and an official fill agree.
+
+    Refuses mismatched ids or quantities. Does not delete the record or invent a fill.
+    """
+    if not isinstance(current, dict) or not isinstance(backup, dict):
+        return None
+    if current.get("official_id") != backup.get("official_id") or current.get("venue") != backup.get("venue"):
+        return None
+    if backup.get("status") != "terminal":
+        return None
+    evidence = backup.get("terminal_evidence") if isinstance(backup.get("terminal_evidence"), dict) else None
+    filled = finite_num(evidence.get("filled")) if evidence else None
+    if filled is None:
+        return None
+    if official_fill is not None and not math.isclose(float(official_fill), filled, rel_tol=0, abs_tol=1e-9):
+        return None
+    if official_fill is None and not official_evidence(evidence):
+        return None
+    restored = dict(current)
+    restored["status"] = "terminal"
+    restored["terminal_evidence"] = dict(evidence)
+    if official_fill is not None and not official_evidence(restored["terminal_evidence"]):
+        restored["terminal_evidence"]["source"] = "official-order"
+        restored["terminal_evidence"]["filled"] = float(official_fill)
+    restored.pop("prior_evidence", None)
+    return restored
 
 async def read_exposure(venue=None, paced=False):
     """Unknown current exposure never reuses a stale (possibly zero) observation."""
@@ -992,8 +1476,12 @@ def finish_ioc_miss(p, t, pio, plt):
 
 async def open_round(dir_, t, spr, med, mid_spr=None):
     """spr = 信号时的可成交价差；入场后改用两边真实成交均价"""
-    if S.recovery or unknown_orders() or S.exit_pending:
+    if S.recovery or unknown_orders() or (S.exit_pending and S.exit_pending.get("submitted")):
         S.alert = "Pending order reconciliation prohibits opening"
+        return
+    blocked, why = loss_blocks_open()
+    if blocked:
+        S.alert = why
         return
     N = plan_notional()
     if S.mode == "live":
@@ -1039,11 +1527,32 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
         if quote_problem(now_ms()) or spr2 is None or not ok2 or entry_dev(dir_, spr2, med) < S.cfg["openBp"]:
             S.note("sys", f"下单前复核：可成交偏离只剩 {'—' if spr2 is None else f'{entry_dev(dir_, spr2, med):+.1f}'}bp < {S.cfg['openBp']:g}bp，放弃开仓")
             S.pos = None; S.cool = now_ms() + 5000; return
+        blocked, why = loss_blocks_open()
+        if blocked:
+            S.pos = None
+            S.alert = why
+            S.save()
+            return
         S.pos["bal0"] = bal0
         S.pos.update(opening_pending=True, opening_failed=False)
         S.save()  # crash/restart must never turn an incomplete entry into normal holding
         tr = V.track_start()
+        intents_before = len(S.intents)
         ok = await V.drive_to(si * qty, -si * qty, False, "开仓")
+        sent = len(S.intents) > intents_before or bool((getattr(V, "last_drive", None) or {}).get("submitted"))
+        if not sent:
+            # The gate returned before any new order. Drop the local open marker.
+            # Do not record a submitted exit, and do not delete older intents.
+            S.pos = None
+            S.exit_pending = None
+            if any(order_outcome_unknown(i) for i in S.intents):
+                S.mode = "stopped"
+                S.alert = "开仓未发单。仍有订单缺少官方终态，已停止新开仓；不重复发单，不平未知腿，不会自动恢复"
+            else:
+                S.alert = "本次开仓在发单前中止，未创建订单，不自动重发"
+                S.cool = max(S.cool, now_ms() + 5000)
+            S.save()
+            return
         if not ok:
             if V.track is tr: V.track = None
             # Unknown is not a failed fill. A later official hedge must not be rescued
@@ -1069,7 +1578,8 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
                     S.alert = "Opening orders pending terminal/exposure reconciliation"
                 else:
                     S.note("err", S.alert)
-            S.exit_pending = dict(submitted=True, why="开仓", t=now_ms())
+            # submitted is true only because this attempt already appended an intent above.
+            S.exit_pending = dict(submitted=True, why="开仓", phase="submitted_unknown", t=now_ms())
             S.save(); return
         if not ok:
             S.mode = "stopped"
@@ -1765,7 +2275,7 @@ async def h_state(req):
     series = [[k, S.buckets[k]] for k in ks if k >= lo]
     return web.json_response(dict(mode=S.mode, cfg=S.cfg, pos=S.pos, trades=S.trades[-200:], olog=S.olog[-150:], live=LIVE, alert=S.alert,
                                   liveEnabled=LIVE_ENABLED, dryRun=DRY_RUN, venuesReady=V.ready, venuesErr=V.err, fund=FUND, series=series, bal=BAL,
-                                  venue=dict(ltUrl=LT_URL, mid=MID, lev=LEVERAGE)))
+                                  loss=loss_view(), venue=dict(ltUrl=LT_URL, mid=MID, lev=LEVERAGE)))
 async def h_cfg(req):
     auth(req); d = await req.json()
     for k in DEF_CFG:
@@ -1786,6 +2296,30 @@ async def h_clear(req):
     auth(req)
     if S.pos: return web.json_response(dict(ok=False, err="有持仓时不能清空"))
     S.trades = []; S.alert = None; S.save(); return web.json_response(dict(ok=True))
+async def h_loss_limit(req):
+    auth(req)
+    mode = S.mode
+    try:
+        body = await req.json()
+        limit = parse_loss_limit(body.get("limitUsd") if isinstance(body, dict) else None)
+    except Exception:
+        return web.json_response(dict(ok=False, err="金额必须是大于 0 且不超过 100000 的有限数字"))
+    set_loss_limit(limit)
+    S.mode = mode
+    return web.json_response(dict(ok=True, loss=loss_view(), mode=S.mode))
+async def h_loss_reset(req):
+    auth(req)
+    mode = S.mode
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict) or body.get("confirm") is not True:
+        return web.json_response(dict(ok=False, err="需要确认重置亏损基线"))
+    if not reset_loss_baseline():
+        return web.json_response(dict(ok=False, err="双边权益未就绪或数据异常，不能重置"))
+    S.mode = mode
+    return web.json_response(dict(ok=True, loss=loss_view(), mode=S.mode))
 
 async def main():
     raise RuntimeError("PUBLIC_ARCHIVE_SERVICE_START_DISABLED")
@@ -1794,7 +2328,8 @@ async def main():
     log.info("Lighter=%s market=%d 杠杆=%dx", LT_URL, MID, LEVERAGE)
     if S.mode == "live" or (S.pos and S.pos.get("live")): await V.init()   # stopped restarts must not change leverage or initialize signing clients
     app = web.Application(); app.add_routes([web.get("/", h_index), web.get("/api/state", h_state), web.post("/api/cfg", h_cfg),
-                                             web.post("/api/mode", h_mode), web.post("/api/kill", h_kill), web.post("/api/clear", h_clear)])
+                                             web.post("/api/mode", h_mode), web.post("/api/kill", h_kill), web.post("/api/clear", h_clear),
+                                             web.post("/api/loss-limit", h_loss_limit), web.post("/api/loss-baseline/reset", h_loss_reset)])
     run = web.AppRunner(app); await run.setup(); await web.TCPSite(run, BIND, PORT).start()
     log.info("控制面板: http://%s:%d  模式=%s LIVE_ENABLED=%s DRY_RUN=%s", BIND, PORT, S.mode, LIVE_ENABLED, DRY_RUN)
     await start_public()
