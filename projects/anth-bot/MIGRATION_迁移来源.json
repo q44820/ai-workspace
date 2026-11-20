@@ -6,7 +6,7 @@
       "source": "bot.py",
       "source_sha256": "6e7c61daa866ce0f5f7e28571f2518fa5826a2ce8b5f1dae3a0813d402fc4494",
       "target": "bot.py",
-      "target_sha256": "6dfbeecd1ac4f5f05a518d058ac043672010141f844e4fcea260cf3875321ad0"
+      "target_sha256": "c5b5c80d1a9c8201c6ea780fbc716aa1e4cb79a4e30c5e74de377adfe6a4a895"
     },
     {
       "source": "simtest.py",

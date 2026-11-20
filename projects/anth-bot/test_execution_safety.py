@@ -32,6 +32,8 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
    self.v.lookup_order=AsyncMock(return_value={})
    raise asyncio.TimeoutError()
   if action=='reject':return {'response':{'data':{'statuses':[{'error':'IOC could not fill'}]}}} if leg=='io' else {'rejected':True}
+  if action=='ioc_miss':return {'status':'ok','response':{'type':'order','data':{'statuses':[{'error':'Order could not immediately match against any resting orders. asset=110000'}]}}}
+  if action=='margin_reject':return {'status':'ok','response':{'type':'order','data':{'statuses':[{'error':'Insufficient margin to place order. asset=110000'}]}}}
   filled=qty/2 if action=='partial' else qty;i['_fake_filled']=filled;self.q[0 if leg=='io' else 1]+=filled*(1 if buy else -1)
   if self.block_after_first and leg=='io':bot.B.lt_t=0
   if action=='unknown':self.v.lookup_order=AsyncMock(return_value={})
@@ -116,6 +118,41 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
   self.assertTrue(bot.S.exit_pending['submitted'])
  async def test_reduce_thin_depth_still_submits_reduce_only(self):
   self.q[:]=[-.174,.174];bot.B.io['asks']=[(1700.1,.01)];bot.B.lt_b={'1660':.01};self.assertTrue(await self.v.drive_to(0,0,True,'平仓'));self.assertTrue(all(x[3] for x in self.sent));self.assertEqual(len(self.sent),2)
+ async def open_signal(self):
+  self.books()
+  with patch.object(bot,'book_exec',return_value=(1700.,1660.,True)), patch.object(bot,'plan_notional',return_value=292.32), patch.object(bot,'free_margin',return_value=(200.,200.)), patch.object(self.v,'set_leverage',new=AsyncMock(return_value=True)):
+   await bot.open_round('S',bot.now_ms(),250.,-50.)
+ def prepare_entry(self):
+  bot.S.pos=None;self.v.balances=AsyncMock(return_value={'io':100.,'lt':100.});self.v.fills=AsyncMock(return_value={'io':{'ok':False},'lt':{'ok':False}})
+ async def test_ioc_miss_cools_down_then_next_signal_can_open(self):
+  self.prepare_entry();self.first='ioc_miss'
+  await self.open_signal()
+  self.assertIsNone(bot.S.pos);self.assertIsNone(bot.S.exit_pending);self.assertEqual(bot.S.mode,'live');self.assertEqual(len(self.sent),1)
+  self.assertGreater(bot.S.cool,bot.now_ms());self.assertEqual(bot.S.trades,[]);self.assertFalse(bot.unknown_orders());self.assertEqual(getattr(self.v.fills,'await_count'),0)
+  old_id=bot.S.intents[-1]['official_id']; self.first='full';bot.S.cool=0
+  await self.open_signal()
+  self.assertEqual([a[0] for a in self.sent],['io','io','lt']);self.assertNotEqual(old_id,bot.S.intents[-2]['official_id']);self.assertEqual(bot.S.mode,'live');self.assertIsNotNone(bot.S.pos)
+ async def test_ioc_miss_delayed_positions_never_start_second_leg_or_duplicate(self):
+  self.prepare_entry();self.first='ioc_miss'
+  self.v.positions=AsyncMock(side_effect=[(0.,0.,None,None),(0.,0.,None,None),(None,None,None,None),(None,None,None,None),(0.,0.,None,None)])
+  await self.open_signal()
+  self.assertEqual(bot.S.mode,'live');self.assertIsNotNone(bot.S.exit_pending);self.assertTrue(bot.unknown_orders());self.assertEqual(len(self.sent),1)
+  await bot.reconcile_exit(bot.now_ms());self.assertEqual(bot.S.mode,'live');self.assertIsNone(bot.S.pos);self.assertIsNone(bot.S.exit_pending);self.assertEqual(len(self.sent),1);self.assertEqual(bot.S.trades,[])
+ async def test_margin_reject_is_not_a_market_miss(self):
+  self.prepare_entry();self.first='margin_reject';await self.open_signal()
+  self.assertEqual(bot.S.mode,'stopped');self.assertEqual(len(self.sent),1);self.assertIsNone(bot.S.pos)
+ async def test_delayed_margin_reject_still_stops_after_flat_is_confirmed(self):
+  self.prepare_entry();self.first='margin_reject'
+  self.v.positions=AsyncMock(side_effect=[(0.,0.,None,None),(0.,0.,None,None),(None,None,None,None),(None,None,None,None),(0.,0.,None,None)])
+  await self.open_signal();await bot.reconcile_exit(bot.now_ms())
+  self.assertEqual(bot.S.mode,'stopped');self.assertIsNone(bot.S.pos);self.assertEqual(len(self.sent),1)
+ async def test_ioc_miss_never_overrides_a_stop_during_reconciliation(self):
+  self.prepare_entry();self.first='ioc_miss'
+  send=self.v.order_io
+  async def stopped(*a):
+   result=await send(*a);bot.S.mode='stopped';return result
+  with patch.object(self.v,'order_io',new=stopped):await self.open_signal()
+  self.assertEqual(bot.S.mode,'stopped');self.assertIsNone(bot.S.pos);self.assertEqual(len(self.sent),1);self.assertEqual(bot.S.trades,[])
  async def test_open_round_first_reject_stays_stopped_and_flat(self):
   self.first='reject';bot.S.pos=None;bot.S.recovery=False;self.v.balances=AsyncMock(return_value={'io':100.,'lt':100.});self.v.fills=AsyncMock(return_value={'io':{'ok':False},'lt':{'ok':False}})
   with patch.object(bot,'book_exec',return_value=(1700.,1660.,True)), patch.object(bot,'plan_notional',return_value=292.32), patch.object(bot,'free_margin',return_value=(200.,200.)), patch.object(self.v,'set_leverage',new=AsyncMock(return_value=True)):

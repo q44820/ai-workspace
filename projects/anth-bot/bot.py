@@ -610,6 +610,8 @@ class Venues:
                           market=COIN if leg == "io" else MID, reduce=bool(reduce),
                           pre=dict(io=pio, lt=plt), submitted=True, accepted=False)
             S.intents.append(intent)
+            if leg == "io" and not reduce and tag == "开仓" and S.pos:
+                S.pos["first_open_intent"] = intent["id"]
             S.exit_pending = dict(submitted=True, why=tag, t=now_ms())
             # Conditional strategy exits become durable only with the first send intent.
             prior_close = S.pos.get("close_requested") if S.pos else None
@@ -636,13 +638,18 @@ class Venues:
                 self._send_intent = None
             # Interpret official single-order submission evidence; acknowledgements alone are not terminal.
             rejected = leg == "lt" and isinstance(result, dict) and result.get("rejected") is True
+            ioc_miss = False
             if leg == "io" and isinstance(result, dict):
                 statuses = result.get("response", {}).get("data", {}).get("statuses", [])
                 rejected = isinstance(statuses, list) and len(statuses) == 1 and all(isinstance(x, dict) and set(x) == {"error"} and isinstance(x["error"], str) and bool(x["error"].strip()) for x in statuses)
+                ioc_miss = (rejected and result.get("status") == "ok" and
+                            result["response"].get("type") == "order" and
+                            statuses[0]["error"].strip().partition(" asset=")[0] ==
+                            "Order could not immediately match against any resting orders.")
             if DRY_RUN and isinstance(result, dict) and result.get("dry"):
                 intent["status"] = "terminal_dry"
             elif rejected:
-                intent["terminal_evidence"] = dict(state="rejected", filled=0.0)
+                intent["terminal_evidence"] = dict(state="iocCancelRejected" if ioc_miss else "rejected", filled=0.0)
             elif isinstance(result, dict):
                 intent["accepted"] = bool(result.get("accepted"))
                 if result.get("tx_hash"): intent["tx_hash"] = str(result["tx_hash"])
@@ -876,6 +883,25 @@ def free_margin():
 def plan_notional():
     return min(S.cfg["margin"] * S.cfg["lev"], S.cfg["maxNotional"])
 
+def finish_ioc_miss(p, t, pio, plt):
+    """Only a proven zero-fill first-leg IOC with fresh flat accounts may skip an entry."""
+    if (S.recovery or not p.get("opening_pending") or not positions_known(pio, plt) or
+            pio != 0 or plt != 0 or unknown_orders() or not S.intents):
+        return False
+    i = S.intents[-1]
+    e = i.get("terminal_evidence", {})
+    if (i.get("id") != p.get("first_open_intent") or i.get("venue") != "io" or
+            i.get("purpose") != "开仓" or i.get("reduce") is not False or
+            i.get("status") != "terminal" or i.get("pre") != {"io": 0, "lt": 0} or
+            e.get("state") != "iocCancelRejected" or not positions_known(e.get("filled")) or e["filled"] != 0):
+        return False
+    S.pos = None; S.exit_pending = None
+    S.cool = max(S.cool, t + S.cfg["cooldownSec"] * 1000)
+    if S.mode == "live": S.alert = None
+    S.note("sys", "Hyperliquid 首腿 IOC 零成交且双边仓位已确认归零，跳过本次信号，不重发、不记实盘交易")
+    S.save()
+    return True
+
 async def open_round(dir_, t, spr, med, mid_spr=None):
     """spr = 信号时的可成交价差；入场后改用两边真实成交均价"""
     if S.recovery or unknown_orders() or S.exit_pending:
@@ -931,11 +957,16 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
         tr = V.track_start()
         ok = await V.drive_to(si * qty, -si * qty, False, "开仓")
         if not ok:
+            if V.track is tr: V.track = None
             S.pos["opening_failed"] = True
             S.save()
-        pi, pl, ei, el = await read_exposure()
-        fl = await V.fills(tr, si * qty, -si * qty)
-        if not ok and unknown_orders():
+        try:
+            pi, pl, ei, el = await read_exposure()
+        except Exception:
+            pi = pl = ei = el = None
+        if not ok and finish_ioc_miss(S.pos, now_ms(), pi, pl):
+            return
+        if unknown_orders() or not positions_known(pi, pl):
             S.pos["opening_pending"] = True
             S.pos["entryFeesKnown"] = False
             S.pos["entryAccountingUnknown"] = True
@@ -943,6 +974,7 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
             S.pos["pxIo"] = S.pos["pxLt"] = None
             S.pos["feesIn"] = None
             S.alert = "Opening orders pending terminal/exposure reconciliation"
+            S.exit_pending = dict(submitted=True, why="开仓", t=now_ms())
             S.save(); return
         if not ok:
             S.mode = "stopped"
@@ -963,6 +995,7 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
                 S.exit_pending = None
                 S.alert = "开仓未完成，双边已核实归零；策略保持停止，待人工确认"
             S.cool = now_ms() + S.cfg["cooldownSec"] * 1000; S.save(); return
+        fl = await V.fills(tr, si * qty, -si * qty)
         S.pos.pop("opening_pending", None)
         S.pos.pop("opening_failed", None)
         fio_, flt_ = fl["io"], fl["lt"]
@@ -1173,6 +1206,8 @@ async def reconcile_exit(t):
     if not positions_known(pio, plt) or unknown_orders():
         S.alert = "Unknown account/order outcome; manual review required"
         return
+    if finish_ioc_miss(p, t, pio, plt):
+        return
     if pio != 0 or plt != 0:
         # Proven terminal orders permit strategy/risk management of actual residuals.
         if S.intents and all(i.get("status") in ("terminal", "terminal_dry", "rejected") for i in S.intents):
@@ -1201,6 +1236,8 @@ async def reconcile_exit(t):
             S.save()
         return
     why = p.get("close_requested") or (S.exit_pending or {}).get("why") or "平仓对账"
+    if p.get("opening_pending") and p.get("opening_failed"):
+        S.mode = "stopped"
     rec = dict(t=p["t"], dir=p["dir"], hold=t - p["t"], inS=p.get("entrySpread", p["spread"]), outS=None, sigS=p.get("sigSpread"),
                bp=None, u=None, uFill=None, uBal=None, uEst=None, fees=None, legs=None, reason=why,
                live=p.get("live", False), real=False, status="unreconciled", weak=p.get("weak", False),
