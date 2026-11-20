@@ -21,7 +21,14 @@
 
 ## 验证
 
-2026-11-21：`python3 test_execution_safety.py` 33 项通过；`python3 test_order_ack.py` 46 项通过（含上述 33 项）；`test_offline.py` 与 `simtest.py` 全部通过。无网络、无真实客户端。候选 `projects/anth-bot/bot.py` SHA256 `8fcefe7f97afc6e98790e88075294353c795465a46518d57ad745a9c599c5a87`。未对生产进程或交易所做核验。
+2026-11-21：归档副本与生产适配候选都跑过同一套 mock。`test_execution_safety.py` 33 项通过，`test_order_ack.py` 46 项通过，`test_offline.py` 与 `simtest.py` 全部通过。无网络、无真实客户端。
+
+归档 `projects/anth-bot/bot.py` SHA256 `c3a6b211928389baf02233d8f6ba7cf3693ba28ffdd72121fa97361a4bac2c90`。
+生产适配候选 SHA256 `8ac03769b90b1316fe7c44df6ff20e9b042bf002cafacfeef917407c8f4d25da`。
+相对基线补丁 SHA256 `005b2dac632a65eb4ac5f1b83fd16a2e974bca743f5730b296ad793e2b85961c`，已用 `patch -p1` 复核，结果与候选一致。
+测试文件 SHA256：`test_execution_safety.py` `c80fd1089606c3d5548d9f057992cc578fce90601d657cf1f7045739a82b9f9e`，`test_order_ack.py` `d948e37b515046e8040eae26bae3802d65a33d72e164b8c6cc142df1daee81e2`。
+
+未对生产进程或交易所做核验。生产适配文件不进入 Git。硬编码访问码和钱包私钥扫描未发现。
 
 ## 决策与原因
 

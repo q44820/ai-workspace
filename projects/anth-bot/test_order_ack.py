@@ -83,10 +83,15 @@ class OrderAckTests(harness.ExecutionTests):
         self.assertEqual(intent["status"], "unknown")
         self.assertTrue(intent.get("ack_timed_out"))
         self.assertNotIn("terminal_evidence", intent)
+        self.assertEqual(bot.S.mode, "stopped")
+        self.assertIn("单边敞口", bot.S.alert)
+        self.assertIn("不会自动恢复", bot.S.alert)
         sent = len(self.sent)
         self.assertFalse(await self.v.drive_to(0, 0, True, "残腿全平"))
+        self.assertFalse(await self.v.drive_to(-.348, .348, False, "开仓"))
         self.assertEqual(len(self.sent), sent)
         self.assertNotEqual(intent.get("status"), "rejected")
+        self.assertEqual(bot.S.mode, "stopped")
 
     async def test_partial_fill_uses_official_quantity(self):
         self.first = "partial"
@@ -145,15 +150,24 @@ class OrderAckTests(harness.ExecutionTests):
         self.v.lookup_order = self.lookup
         self.v._lookup_at.clear()
         self.v._exposure_at = None
-        bot.S.pos.update(t=bot.now_ms() - 1000, spread=0., opening_pending=True, opening_failed=True, live=True)
+        bot.S.pos.update(t=bot.now_ms() - 1000, spread=0., med=-50., N=290., pxIo=1700., pxLt=1660.,
+                         opening_pending=True, opening_failed=True, live=True)
         bot.S.exit_pending = dict(submitted=True, why="开仓")
         await bot.reconcile_exit(bot.now_ms())
         self.assertEqual(len(self.sent), 2)
         self.assertFalse(bot.S.pos.get("rescue_pending"))
         self.assertFalse(bot.S.pos.get("opening_failed"))
-        self.assertEqual(bot.S.mode, "live")
+        self.assertIsNone(bot.S.exit_pending)
+        self.assertEqual(bot.S.mode, "stopped")
+        self.assertIn("继续管理这笔持仓", bot.S.alert)
         self.assertFalse(bot.S.pos.get("entryAccountingUnknown"))
         self.assertFalse(bot.S.pos.get("entryFeesKnown"))
+        why, _note = bot.hold_decision(bot.S.pos, bot.now_ms(), 1700, 1660)
+        self.assertNotEqual(why, "开仓")
+        sent = len(self.sent)
+        self.assertFalse(await self.v.drive_to(-.348, .348, False, "开仓"))
+        self.assertEqual(len(self.sent), sent)
+        self.assertEqual(bot.S.mode, "stopped")
 
     async def test_emergency_close_late_fill_is_unreconciled(self):
         self.q[:] = [-.174, .174]

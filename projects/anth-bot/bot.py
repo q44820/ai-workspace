@@ -457,6 +457,9 @@ class Venues:
                     intent.pop("terminal_evidence", None)
                     if intent.get("status") not in ("terminal", "terminal_dry", "rejected"):
                         intent["status"] = "unknown"
+                exposure = self.last_confirm_exposure or (None, None)
+                if unresolved_exposure_guard(exposure[0], exposure[1], not intent.get("reduce")):
+                    S.note("err", S.alert)
                 return
             await asyncio.sleep(min(self.ack_interval, remaining))
 
@@ -614,6 +617,10 @@ class Venues:
             S.exit_pending = dict(submitted=True, why=tag)
             S.save()
             return False
+        if not reduce and S.mode == "stopped":
+            S.alert = "策略已停止，禁止新开仓"
+            S.save()
+            return False
         if not reduce and (S.recovery or (S.pos and (
                 S.pos.get("opening_failed") or S.pos.get("close_requested") or S.pos.get("rescue_pending")))):
             S.alert = "本轮开仓已中止或处于恢复状态，禁止新开腿"
@@ -714,7 +721,8 @@ class Venues:
                 # An acceptance or a missing receipt is not a rejection and is not a fill.
                 await self.confirm_submission(intent)
                 if not self._submission_resolved(intent):
-                    S.alert = "Order outcome unknown after bounded read-only confirmation; resend prohibited"
+                    if not (isinstance(S.alert, str) and "不会自动恢复" in S.alert):
+                        S.alert = "Order outcome unknown after bounded read-only confirmation; resend prohibited"
                     S.save()
                     return False
                 exposure = self.last_confirm_exposure or (None, None)
@@ -840,6 +848,23 @@ def order_evidence(i, result):
         return dict(state=state, filled=filled, oid=row["oid"] if i["venue"] == "io" else row["order_index"], source="official-order")
     except (KeyError, TypeError, ValueError, OverflowError): return None
 
+
+def unresolved_exposure_guard(pio, plt, opening):
+    """Stop new opens when an order is still unknown and exposure is unverified.
+
+    One-sided exposure gets an explicit alarm. Nothing here flattens, resends,
+    marks a fill, or returns the strategy to live. Permanent unknown stays protected.
+    """
+    if not positions_known(pio, plt):
+        return False
+    one_sided = (pio == 0) != (plt == 0)
+    if not (one_sided or (opening and (pio != 0 or plt != 0))):
+        return False
+    S.mode = "stopped"
+    S.alert = ("⚠️ 单边敞口订单结果未知，已停止新开仓；持续只读对账，不重复发单，不把未知当成成交，不会自动恢复"
+               if one_sided else
+               "⚠️ 开仓结果仍未知且账户有敞口，已停止新开仓；持续只读对账，不重复发单，不会自动恢复")
+    return True
 
 def lighter_submission(tx, resp, err):
     """Classify a SignerClient create_market_order tuple. Code 200 is accepted, not filled."""
@@ -1039,7 +1064,11 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
             S.pos["entryPxIoActual"] = S.pos["entryPxLtActual"] = None
             S.pos["pxIo"] = S.pos["pxLt"] = None
             S.pos["feesIn"] = None
-            S.alert = "Opening orders pending terminal/exposure reconciliation"
+            if not (S.mode == "stopped" and isinstance(S.alert, str) and "不会自动恢复" in S.alert):
+                if not unresolved_exposure_guard(pi, pl, True):
+                    S.alert = "Opening orders pending terminal/exposure reconciliation"
+                else:
+                    S.note("err", S.alert)
             S.exit_pending = dict(submitted=True, why="开仓", t=now_ms())
             S.save(); return
         if not ok:
@@ -1270,7 +1299,10 @@ async def reconcile_exit(t):
     if positions_known(pio, plt): S.actual = dict(io=pio, lt=plt, t=t)
     LIVE.update(posU=None, posBp=None)
     if not positions_known(pio, plt) or unknown_orders():
-        S.alert = "Unknown account/order outcome; manual review required"
+        if unresolved_exposure_guard(pio, plt, True):
+            limited_note("naked-unknown", t, 15000, "err", S.alert)
+        else:
+            S.alert = "Unknown account/order outcome; manual review required"
         return
     if finish_ioc_miss(p, t, pio, plt):
         return
@@ -1281,6 +1313,7 @@ async def reconcile_exit(t):
             opening = p.pop("opening_pending", False)
             if not opening:
                 p["close_requested"] = p.get("close_requested") or "平仓对账"
+            managed_hedge = False
             if opening:
                 si = 1 if p["dir"] == "L" else -1
                 hedge = (same_size(abs(pio), p["qIo"]) and same_size(abs(plt), p["qLt"])
@@ -1289,6 +1322,10 @@ async def reconcile_exit(t):
                 p["rescue_pending"] = not hedge
                 if hedge:
                     p.pop("opening_failed", None)
+                    managed_hedge = True
+                    # Official hedge resumes management of this position only.
+                    # A stopped strategy is not switched back to live and cannot open a new round.
+                    S.alert = "官方已确认完整对冲，继续管理这笔持仓；不因先前未知自动新开仓"
                 if p["rescue_pending"]:
                     p["close_requested"] = "残腿全平"
                     S.mode = "stopped"
@@ -1302,7 +1339,8 @@ async def reconcile_exit(t):
                             p["entryPx" + leg + "Actual"] = value
                             p["src" + leg] = "account"
                     p["entryAccountingUnknown"] = not (valid_price(p.get("pxIo")) and valid_price(p.get("pxLt")))
-            S.alert = "Terminal orders reconciled; actual exposure retained for strategy management"
+            if not managed_hedge:
+                S.alert = "Terminal orders reconciled; actual exposure retained for strategy management"
             S.save()
         return
     why = p.get("close_requested") or (S.exit_pending or {}).get("why") or "平仓对账"
