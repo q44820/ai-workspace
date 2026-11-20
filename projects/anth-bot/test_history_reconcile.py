@@ -1,5 +1,6 @@
 """Offline regressions for historical order reconciliation and the combined loss limit."""
-import json, unittest
+import json, sys, unittest
+from pathlib import Path
 from unittest.mock import AsyncMock
 import test_execution_safety as harness
 
@@ -100,18 +101,50 @@ class HistoryReconcileTests(harness.ExecutionTests):
         self.assertEqual(bot.S.intents[2]["status"], "terminal")
         self.assertEqual(bot.S.intents[2]["terminal_evidence"]["filled"], 0.126)
         self.assertEqual(len(bot.S.intents), 6)
-        self.assertIsNotNone(bot.S.pos)
+        phantom = bot.S.pos
+        await bot.open_round("S", bot.now_ms(), 250.0, -50.0)
+        self.assertEqual(self.sent, [])
+        self.assertIs(bot.S.pos, phantom)
+        self.assertEqual(bot.S.intents[0]["status"], "unknown")
+        self.assertEqual(bot.S.mode, "live")
+        self.assertIn("Pending order reconciliation", bot.S.alert)
 
-    def test_audit_restore_requires_backup_and_official_agreement(self):
+    def test_audit_restore_requires_ops_query_not_a_typed_number(self):
         current = dict(official_id=113917744074459, venue="lt", status="unknown")
         backup = intent("lt", "开仓", 1, 113917744074459, 0.174)
+        official = dict(source="official-order", official_id=113917744074459, venue="lt", filled=0.174, state="filled", oid=1002)
         self.assertIsNone(bot.audit_restore_intent(current, backup, None))
-        restored = bot.audit_restore_intent(current, backup, 0.174)
+        self.assertIsNone(bot.audit_restore_intent(current, backup, 0.174))
+        self.assertIsNone(bot.audit_restore_intent(current, backup, dict(official, source="manual")))
+        self.assertIsNone(bot.audit_restore_intent(current, backup, dict(official, filled=0.1)))
+        self.assertIsNone(bot.audit_restore_intent(current, backup, dict(official, official_id=1)))
+        restored = bot.audit_restore_intent(current, backup, official)
         self.assertEqual(restored["status"], "terminal")
         self.assertEqual(restored["terminal_evidence"]["filled"], 0.174)
         self.assertEqual(restored["terminal_evidence"]["source"], "official-order")
-        self.assertIsNone(bot.audit_restore_intent(current, backup, 0.1))
+        self.assertEqual(restored["audit_note"], "proposal-only-from-ops-readonly-query")
         self.assertEqual(current["status"], "unknown")
+        self.assertNotIn("terminal_evidence", current)
+        held = dict(current, terminal_evidence=dict(source="official-order", filled=0.174))
+        self.assertIsNone(bot.audit_restore_intent(held, backup, official))
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, payload in (("current.json", current), ("backup.json", backup)):
+                (root / name).write_text(json.dumps(payload))
+            (root / "typed.json").write_text("0.174")
+            (root / "official.json").write_text(json.dumps(official))
+            script = bot.HERE / "audit_restore_offline.py"
+            refused = subprocess.run([sys.executable, str(script), str(root / "current.json"), str(root / "backup.json"), str(root / "typed.json")], capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("refuse", refused.stderr + refused.stdout)
+            proposed = subprocess.run([sys.executable, str(script), str(root / "current.json"), str(root / "backup.json"), str(root / "official.json")], capture_output=True, text=True)
+            self.assertEqual(proposed.returncode, 0, proposed.stderr)
+            body = json.loads(proposed.stdout)
+            self.assertTrue(body["ok"])
+            self.assertFalse(body["wrote"])
+            self.assertEqual(body["terminal_evidence"]["filled"], 0.174)
+            self.assertFalse((root / "state.json").exists())
 
     async def test_loss_default_blocks_until_fresh_bilateral_equity(self):
         bot.S.loss = bot.default_loss_state()

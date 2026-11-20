@@ -1341,31 +1341,39 @@ def _classify_lt_cashflow(deposits, withdraws, transfers, account_index, usdc_as
             return None
     return total
 
-def audit_restore_intent(current, backup, official_fill=None):
-    """Restore one historical intent only when backup and an official fill agree.
+def audit_restore_intent(current, backup, official=None):
+    """Propose one restored intent. Does not write state or invent an official fill.
 
-    Refuses mismatched ids or quantities. Does not delete the record or invent a fill.
+    official must be the ops read-only query record, with source official-order or
+    official-submission, the same official_id and venue, and a filled quantity that
+    matches the backup terminal evidence. A bare number, a missing source, or a
+    hand-typed quantity is refused. Current official evidence is never overwritten.
     """
-    if not isinstance(current, dict) or not isinstance(backup, dict):
+    if not isinstance(current, dict) or not isinstance(backup, dict) or not isinstance(official, dict):
+        return None
+    if isinstance(official.get("filled"), bool):
         return None
     if current.get("official_id") != backup.get("official_id") or current.get("venue") != backup.get("venue"):
+        return None
+    if official.get("official_id") != current.get("official_id") or official.get("venue") != current.get("venue"):
+        return None
+    if current.get("status") != "unknown" or official_evidence(current.get("terminal_evidence")):
         return None
     if backup.get("status") != "terminal":
         return None
     evidence = backup.get("terminal_evidence") if isinstance(backup.get("terminal_evidence"), dict) else None
-    filled = finite_num(evidence.get("filled")) if evidence else None
-    if filled is None:
+    backed = finite_num(evidence.get("filled")) if evidence else None
+    queried = finite_num(official.get("filled"))
+    if backed is None or queried is None or backed <= 0 or not math.isclose(queried, backed, rel_tol=0, abs_tol=1e-9):
         return None
-    if official_fill is not None and not math.isclose(float(official_fill), filled, rel_tol=0, abs_tol=1e-9):
-        return None
-    if official_fill is None and not official_evidence(evidence):
+    if official.get("source") not in ("official-order", "official-submission"):
         return None
     restored = dict(current)
     restored["status"] = "terminal"
-    restored["terminal_evidence"] = dict(evidence)
-    if official_fill is not None and not official_evidence(restored["terminal_evidence"]):
-        restored["terminal_evidence"]["source"] = "official-order"
-        restored["terminal_evidence"]["filled"] = float(official_fill)
+    restored["terminal_evidence"] = dict(source=official["source"], filled=float(queried), state=official.get("state") or "filled")
+    if official.get("oid") is not None:
+        restored["terminal_evidence"]["oid"] = official["oid"]
+    restored["audit_note"] = "proposal-only-from-ops-readonly-query"
     restored.pop("prior_evidence", None)
     return restored
 
