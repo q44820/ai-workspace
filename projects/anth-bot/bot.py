@@ -266,6 +266,8 @@ class Venues:
     def __init__(self):
         self.ready = False; self.err = None; self.hl = None; self.lt = None; self.track = None
         self._send_intent = None; self._lookup_at = {}; self.read_timeout = ACCOUNT_READ_TIMEOUT; self.lookup_timeout = 4.0; self.exposure_timeout = 4.0; self.exposure_interval = 2.0; self._exposure_at = None
+        # Order-terminal wait. Independent of cfg confirmSec, which only gates entry signals.
+        self.ack_timeout = 6.0; self.ack_interval = 0.25; self.last_confirm_exposure = None
         self.hl_addr = ENV("HL_ACCOUNT_ADDRESS", ""); self.lt_idx = int(ENV("LIGHTER_ACCOUNT_INDEX", "0") or 0)
     async def init(self):
         if DRY_RUN:
@@ -393,10 +395,12 @@ class Venues:
         if self.track is not None:
             if h: self.track["ltHashes"].add(str(h))
             self.track["ltCoi"].add(int(coi))
-        code = getattr(resp, "code", None)
-        rejected = (tx is None and resp is None and isinstance(err, str) and bool(err.strip())) or (err is None and type(code) is int and code != 200)
-        S.note("err" if rejected else "fill", "Lighter submission rejected" if rejected else "Lighter submission outcome unconfirmed")
-        return dict(rejected=rejected, tx_hash=h, accepted=err is None and code == 200)
+        outcome = lighter_submission(tx, resp, err)
+        S.note("err" if outcome["rejected"] else "fill",
+               "Lighter submission rejected" if outcome["rejected"] else "Lighter submission outcome unconfirmed",
+               code=outcome.get("code"), accepted=outcome["accepted"], rejected=outcome["rejected"],
+               txHashPresent=bool(outcome.get("tx_hash")))
+        return outcome
 
     def _require_intent(self, venue, qty, buy, reduce):
         i = self._send_intent
@@ -424,18 +428,57 @@ class Venues:
             _request_timeout=float(self.lookup_timeout))
         return result.to_dict()
 
+    def _submission_resolved(self, intent):
+        if intent.get("status") in ("terminal", "terminal_dry", "rejected"):
+            return True
+        return official_evidence(intent.get("terminal_evidence"))
+
+    async def confirm_submission(self, intent):
+        """Poll the official order read until it is visible or ack_timeout elapses.
+
+        cfg confirmSec is an entry-signal window and is intentionally not consulted.
+        sendTx code 200 and a transaction hash are acceptance only, never a fill.
+        """
+        deadline = time.monotonic() + self.ack_timeout
+        while True:
+            self._lookup_at.pop(intent.get("id"), None)
+            try:
+                exposure = await read_exposure(self)
+            except Exception:
+                exposure = (None, None)
+            self.last_confirm_exposure = exposure
+            await self.reconcile_orders(exposure)
+            if self._submission_resolved(intent):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                intent["ack_timed_out"] = True
+                if not official_evidence(intent.get("terminal_evidence")):
+                    intent.pop("terminal_evidence", None)
+                    if intent.get("status") not in ("terminal", "terminal_dry", "rejected"):
+                        intent["status"] = "unknown"
+                return
+            await asyncio.sleep(min(self.ack_interval, remaining))
+
     async def reconcile_orders(self, exposure):
         """Release only mapped terminal evidence AND matching current actual exposure.
         Absence, lookup errors, expired history and lagged positions retain the barrier.
         """
         if DRY_RUN or not positions_known(*exposure[:2]): return
         for i in S.intents:
-            if i.get("status") in ("terminal", "terminal_dry", "rejected"): continue
+            if i.get("status") in ("terminal", "terminal_dry", "rejected"):
+                if i.get("status") == "terminal_dry" or official_evidence(i.get("terminal_evidence")):
+                    continue
+                i["status"] = "unknown"
+                i.pop("terminal_evidence", None)
             venue = i.get("venue")
             if venue not in ("io", "lt") or not i.get("official_id") or "pre" not in i: continue
             account = self.hl_addr if venue == "io" else self.lt_idx
             if i.get("account") != account or i.get("market") != (COIN if venue == "io" else MID): continue
             evidence = i.get("terminal_evidence")
+            if evidence is not None and not official_evidence(evidence):
+                i.pop("terminal_evidence", None)
+                evidence = None
             if evidence is None:
                 # A per-intent monotonic deadline also limits repeated ticks and concurrent reads.
                 t = time.monotonic()
@@ -560,11 +603,6 @@ class Venues:
                 S.save()
                 return False
             S.save()  # represent orphan exposure before any account read or submission
-        if not reduce and (S.recovery or (S.pos and (
-                S.pos.get("opening_failed") or S.pos.get("close_requested") or S.pos.get("rescue_pending")))):
-            S.alert = "本轮开仓已中止或处于恢复状态，禁止新开腿"
-            S.save()
-            return False
         try:
             pio, plt, _, _ = await read_exposure(self, paced=S.recovery)
         except Exception:
@@ -574,6 +612,11 @@ class Venues:
         if unknown_orders():
             S.alert = "Unknown order outcome: manual review required; resend prohibited"
             S.exit_pending = dict(submitted=True, why=tag)
+            S.save()
+            return False
+        if not reduce and (S.recovery or (S.pos and (
+                S.pos.get("opening_failed") or S.pos.get("close_requested") or S.pos.get("rescue_pending")))):
+            S.alert = "本轮开仓已中止或处于恢复状态，禁止新开腿"
             S.save()
             return False
         if reduce and not S.pos and not S.recovery_reduce_allowed:
@@ -595,6 +638,7 @@ class Venues:
             S.save()
             return False
         # One submission per leg only. Account snapshots cannot establish order finality.
+        sent_ids = []
         for leg, delta, book in needed:
             # Never reuse the pre-first-leg book after a venue round trip.
             book = B.io if leg == "io" else B.lt()
@@ -649,7 +693,7 @@ class Venues:
             if DRY_RUN and isinstance(result, dict) and result.get("dry"):
                 intent["status"] = "terminal_dry"
             elif rejected:
-                intent["terminal_evidence"] = dict(state="iocCancelRejected" if ioc_miss else "rejected", filled=0.0)
+                intent["terminal_evidence"] = dict(state="iocCancelRejected" if ioc_miss else "rejected", filled=0.0, source="official-submission")
             elif isinstance(result, dict):
                 intent["accepted"] = bool(result.get("accepted"))
                 if result.get("tx_hash"): intent["tx_hash"] = str(result["tx_hash"])
@@ -664,17 +708,17 @@ class Venues:
                 intent["status"] = "unknown"
                 intent.pop("terminal_evidence", None)
                 raise
+            sent_ids.append(intent["id"])
             if not reduce:
-                # Resolve each opening leg independently; acknowledgements and stale
-                # positions cannot authorize a second opening leg. No resend loop.
-                try:
-                    pio, plt, _, _ = await read_exposure(self)
-                    await self.reconcile_orders((pio, plt))
-                except Exception:
-                    if S.pos: S.pos["opening_failed"] = True
-                    S.alert = "开仓结果核对失败，禁止继续开腿或重复下单"
+                # Resolve each opening leg independently before another open leg.
+                # An acceptance or a missing receipt is not a rejection and is not a fill.
+                await self.confirm_submission(intent)
+                if not self._submission_resolved(intent):
+                    S.alert = "Order outcome unknown after bounded read-only confirmation; resend prohibited"
                     S.save()
                     return False
+                exposure = self.last_confirm_exposure or (None, None)
+                pio, plt = exposure[0], exposure[1]
                 evidence = intent.get("terminal_evidence", {})
                 dec = HL_SZ_DEC if leg == "io" else LT_SZ_DEC
                 tol = 10 ** -dec / 2
@@ -692,6 +736,12 @@ class Venues:
                     if not unknown_orders(): S.exit_pending = None
                     S.save()
                     return False
+        if reduce:
+            # Known residuals may all be submitted once. Their receipts still have to
+            # resolve before success or a protective stop; a 20ms acceptance is not final.
+            for pending in S.intents:
+                if pending.get("id") in sent_ids and not self._submission_resolved(pending):
+                    await self.confirm_submission(pending)
         pio, plt, _, _ = await read_exposure(self)
         await self.reconcile_orders((pio, plt))
         ok = positions_known(pio, plt) and (pio == 0 if t_io == 0 else abs(t_io-pio) < 0.0005) and (plt == 0 if t_lt == 0 else abs(t_lt-plt) < 0.000005) and not unknown_orders()
@@ -745,7 +795,7 @@ def submission_evidence(i, result):
             oid = f["oid"]
             if type(oid) is not int or oid < 0 or q > i["qty"] or q <= 0 or not valid_price(float(f["avgPx"])):
                 return None, None, False
-            return dict(state="filled", filled=q), oid, True
+            return dict(state="filled", filled=q, source="official-submission"), oid, True
         if set(row) == {"resting"} and type(row["resting"]["oid"]) is int:
             return None, row["resting"]["oid"], True
     except (KeyError, TypeError, ValueError, OverflowError): pass
@@ -787,9 +837,22 @@ def order_evidence(i, result):
             if state == "filled":
                 if remaining != 0: return None
             elif state not in LT_CANCEL_STATES: return None
-        return dict(state=state, filled=filled, oid=row["oid"] if i["venue"] == "io" else row["order_index"])
+        return dict(state=state, filled=filled, oid=row["oid"] if i["venue"] == "io" else row["order_index"], source="official-order")
     except (KeyError, TypeError, ValueError, OverflowError): return None
 
+
+def lighter_submission(tx, resp, err):
+    """Classify a SignerClient create_market_order tuple. Code 200 is accepted, not filled."""
+    h = getattr(resp, "tx_hash", None) if resp is not None else None
+    code = getattr(resp, "code", None)
+    # A transport/API error that never produced a transaction is a rejection.
+    # Anything that may already have been accepted stays unconfirmed, not rejected.
+    rejected = ((tx is None and resp is None and isinstance(err, str) and bool(err.strip()))
+                or (err is None and type(code) is int and code != 200))
+    return dict(rejected=rejected, tx_hash=h, accepted=err is None and type(code) is int and code == 200, code=code)
+
+def official_evidence(evidence):
+    return isinstance(evidence, dict) and evidence.get("source") in ("official-submission", "official-order")
 
 def positions_known(*values):
     return all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in values)
@@ -958,7 +1021,10 @@ async def open_round(dir_, t, spr, med, mid_spr=None):
         ok = await V.drive_to(si * qty, -si * qty, False, "开仓")
         if not ok:
             if V.track is tr: V.track = None
-            S.pos["opening_failed"] = True
+            # Unknown is not a failed fill. A later official hedge must not be rescued
+            # just because this flag was latched during the confirmation gap.
+            if not unknown_orders():
+                S.pos["opening_failed"] = True
             S.save()
         try:
             pi, pl, ei, el = await read_exposure()
@@ -1217,8 +1283,12 @@ async def reconcile_exit(t):
                 p["close_requested"] = p.get("close_requested") or "平仓对账"
             if opening:
                 si = 1 if p["dir"] == "L" else -1
-                p["rescue_pending"] = bool(p.get("opening_failed")) or not (same_size(abs(pio), p["qIo"]) and
-                    same_size(abs(plt), p["qLt"]) and pio * si > 0 and plt * si < 0)
+                hedge = (same_size(abs(pio), p["qIo"]) and same_size(abs(plt), p["qLt"])
+                         and pio * si > 0 and plt * si < 0)
+                # A completed official hedge is a position, even if an earlier ack timed out.
+                p["rescue_pending"] = not hedge
+                if hedge:
+                    p.pop("opening_failed", None)
                 if p["rescue_pending"]:
                     p["close_requested"] = "残腿全平"
                     S.mode = "stopped"
@@ -1231,7 +1301,7 @@ async def reconcile_exit(t):
                             p["px" + leg] = value
                             p["entryPx" + leg + "Actual"] = value
                             p["src" + leg] = "account"
-                p["entryAccountingUnknown"] = True
+                    p["entryAccountingUnknown"] = not (valid_price(p.get("pxIo")) and valid_price(p.get("pxLt")))
             S.alert = "Terminal orders reconciled; actual exposure retained for strategy management"
             S.save()
         return
