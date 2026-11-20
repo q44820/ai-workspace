@@ -1,7 +1,7 @@
 """Offline regressions for historical order reconciliation and the combined loss limit."""
-import json, sys, unittest
+import json, sys, types, unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 import test_execution_safety as harness
 
 bot = harness.bot
@@ -288,6 +288,232 @@ class HistoryReconcileTests(harness.ExecutionTests):
             blocked = subprocess.run([sys.executable, str(script), *[str(paths[name]) for name in paths], "--output", str(root / "current.json")], capture_output=True, text=True)
             self.assertEqual(blocked.returncode, 2)
             self.assertEqual(json.loads((root / "current.json").read_text())["intents"][0]["status"], "unknown")
+
+    async def test_stopped_readonly_cashflow_and_reconcile_without_trading_init(self):
+        calls = []
+
+        class Configuration:
+            def __init__(self, host=None):
+                calls.append(("config", host))
+
+        class ApiClient:
+            def __init__(self, configuration=None):
+                calls.append("api-client")
+            async def close(self):
+                calls.append("api-close")
+
+        class TransactionApi:
+            def __init__(self, api_client):
+                calls.append("tx-api")
+
+        class SignerClient:
+            ASSET_ID_USDC = 3
+            def __init__(self, url=None, account_index=None, api_private_keys=None):
+                calls.append("signer-init")
+                self.api_client = ApiClient()
+            def create_auth_token_with_expiry(self, deadline):
+                calls.append(("auth", deadline))
+                return "signed-read-token", None
+            async def close(self):
+                calls.append("signer-close")
+                await self.api_client.close()
+            async def update_leverage(self, *args, **kwargs):
+                calls.append("update_leverage")
+            async def create_market_order(self, *args, **kwargs):
+                calls.append("create_market_order")
+            async def cancel_order(self, *args, **kwargs):
+                calls.append("cancel_order")
+            async def send_tx(self, *args, **kwargs):
+                calls.append("send_tx")
+
+        fake = types.ModuleType("lighter")
+        fake.Configuration = Configuration
+        fake.ApiClient = ApiClient
+        fake.TransactionApi = TransactionApi
+        fake.SignerClient = SignerClient
+        values = {
+            "HL_ACCOUNT_ADDRESS": "0x" + "11" * 20,
+            "LIGHTER_ACCOUNT_INDEX": "7",
+            "LIGHTER_API_KEY_INDEX": "4",
+            "LIGHTER_API_PRIVATE_KEY": "fixture-key",
+            "LIGHTER_READ_ONLY_TOKEN": "",
+        }
+        bot._READONLY["client"] = None
+        bot.V.lt = None
+        inited = []
+        async def refuse_init():
+            inited.append("init")
+            raise AssertionError("V.init")
+        bot.V.init = refuse_init
+        async def refuse_leverage():
+            inited.append("set_leverage")
+            raise AssertionError("set_leverage")
+        bot.V.set_leverage = refuse_leverage
+        with patch.dict(sys.modules, {"lighter": fake}), patch.object(bot, "ENV", lambda name, default=None: values.get(name, default)):
+            reader = await bot.open_readonly_lighter()
+            self.assertIsInstance(reader, bot.ReadonlyHistory)
+            self.assertIsInstance(reader.tx_api, TransactionApi)
+            self.assertEqual(reader.token, "signed-read-token")
+            self.assertEqual(bot.lighter_usdc_asset_id(), 3)
+        self.assertIn(("auth", bot.READ_TOKEN_TTL), calls)
+        self.assertIn("signer-close", calls)
+        self.assertNotIn("update_leverage", calls)
+        self.assertNotIn("create_market_order", calls)
+        self.assertNotIn("cancel_order", calls)
+        self.assertNotIn("send_tx", calls)
+        self.assertIsNone(bot.V.lt)
+        self.assertEqual(inited, [])
+
+        cursor = "c" * 32
+        deposit_time = 1_794_588_024_000
+        pages = {
+            "deposit_history": [
+                {"code": 200, "cursor": "dep", "deposits": [
+                    {"id": "d1", "asset_id": 3, "timestamp": deposit_time, "status": "completed", "amount": "1"},
+                    {"id": "d2", "asset_id": 3, "timestamp": deposit_time + 177000, "status": "completed", "amount": "2"},
+                ]},
+                {"code": 200, "cursor": "", "deposits": []},
+            ],
+            "transfer_history": [
+                {"code": 200, "cursor": "tr", "transfers": []},
+                {"code": 200, "cursor": "", "transfers": []},
+            ],
+            "withdraw_history": [
+                {"code": 200, "cursor": cursor, "withdraws": []},
+                {"code": 200, "cursor": cursor, "withdraws": []},
+            ],
+        }
+        seen = {"explorer": 0}
+
+        class FixtureApi:
+            def __init__(self):
+                self.n = {}
+            async def _page(self, method, key, cursor_arg):
+                seen.setdefault(method, []).append(cursor_arg)
+                n = self.n.get(method, 0)
+                self.n[method] = n + 1
+                return pages[method][min(n, len(pages[method]) - 1)]
+            async def deposit_history(self, **kwargs):
+                return await self._page("deposit_history", "deposits", kwargs.get("cursor"))
+            async def transfer_history(self, **kwargs):
+                return await self._page("transfer_history", "transfers", kwargs.get("cursor"))
+            async def withdraw_history(self, **kwargs):
+                return await self._page("withdraw_history", "withdraws", kwargs.get("cursor"))
+
+        fixture = FixtureApi()
+
+        async def opener():
+            return bot.ReadonlyHistory(None, fixture, "fixture-token", bot.time.time() + 600)
+
+        async def explorer(session, account):
+            seen["explorer"] += 1
+            return [[]]
+
+        class Session:
+            def post(self, url, json=None):
+                class Response:
+                    async def __aenter__(self):
+                        return self
+                    async def __aexit__(self, *args):
+                        return False
+                    async def json(self):
+                        return []
+                return Response()
+
+        bot._READONLY["client"] = None
+        bot.S.mode = "stopped"
+        bot.S.pos = None
+        baseline_ms = 1_795_208_244_000
+        bot.S.loss = bot.normalize_loss_state({
+            "limitUsd": 5, "triggered": False,
+            "baseline": {"io": 103.837032, "lt": 106.047896, "total": 209.884928, "t": baseline_ms},
+        })
+        self.assertFalse(bot.S.loss["ready"])
+        base = dict(bot.S.loss["baseline"])
+        now = bot.now_ms()
+        bot.BAL["io"] = dict(mode="unifiedAccount", mainValue=0.0, ioValue=0.0, usdc=103.837032, t=now)
+        bot.BAL["lt"] = dict(equity=106.047896, l1="0x" + "22" * 20, t=now)
+        with patch.object(bot, "open_readonly_lighter", opener), patch.object(bot, "_explorer_withdraw_pages", explorer), patch.object(bot, "lighter_usdc_asset_id", lambda: 3), patch.object(bot, "ENV", lambda name, default=None: values.get(name, default)):
+            await bot.note_official_equity(Session())
+            await bot.note_official_equity(Session())
+            self.assertTrue(bot.S.loss["ready"])
+            self.assertEqual(bot.S.loss["baseline"], base)
+            self.assertEqual(bot.S.loss["netLoss"], 0.0)
+            self.assertFalse(bot.S.loss["triggered"])
+            self.assertIsNone(bot.S.loss.get("resetAt"))
+            self.assertEqual(bot.S.mode, "stopped")
+            self.assertGreaterEqual(seen["explorer"], 1)
+            self.assertIsNone(bot.V.lt)
+            original_withdraw = fixture.withdraw_history
+            fixture.withdraw_history = AsyncMock(side_effect=RuntimeError("stream down"))
+            bot._READONLY["client"] = None
+            await bot.note_official_equity(Session())
+            self.assertFalse(bot.S.loss["ready"])
+            self.assertEqual(bot.S.loss["baseline"], base)
+            self.assertEqual(bot.S.mode, "stopped")
+            fixture.withdraw_history = original_withdraw
+            fixture.n["withdraw_history"] = 0
+            bot._READONLY["client"] = None
+            await bot.note_official_equity(Session())
+            self.assertTrue(bot.S.loss["ready"])
+            self.assertEqual(bot.S.loss["baseline"], base)
+            self.assertEqual(bot.S.mode, "stopped")
+        bot.set_loss_limit(5, now)
+        self.assertEqual(bot.S.loss["baseline"], base)
+        self.assertEqual(inited, [])
+
+        async def positions():
+            return (
+                {"marginSummary": {"accountValue": "0.0"}, "assetPositions": []},
+                {"code": 200, "accounts": [{"total_asset_value": "106.047896", "positions": [
+                    {"market_id": bot.MID, "position": "0", "sign": 1}]}]},
+            )
+        rows = backup_round(1_794_902_400_000)
+        for row in rows[2:4]:
+            row["status"] = "terminal_wait"
+            row["terminal_evidence"]["source"] = "official-order"
+        bot.S.intents = rows
+        bot.S.alert = "Unknown account/order outcome; manual review required"
+        bot.S.pos = None
+        bot.S.mode = "stopped"
+        bot.S.busy = False
+        self.v.lookup_order = AsyncMock(return_value={})
+        with patch.object(bot, "fetch_official_positions", positions):
+            await bot.reconcile_stopped_flat()
+        self.assertEqual([row["status"] for row in bot.S.intents[2:4]], ["terminal", "terminal"])
+        self.assertEqual(bot.S.intents[2]["terminal_evidence"]["filled"], 0.126)
+        self.assertIsNone(bot.S.alert)
+        self.assertEqual(bot.S.mode, "stopped")
+        self.assertEqual(len(bot.S.intents), 6)
+        latest = intent("lt", "开仓", 1_795_210_000_000, 999, 0.01, status="unknown")
+        latest.pop("terminal_evidence")
+        bot.S.intents.append(latest)
+        bot.S.alert = "Unknown account/order outcome; manual review required"
+        other = "⚠️ 残腿未能全平，已停止机器人，请立刻手动处理"
+        with patch.object(bot, "fetch_official_positions", positions):
+            await bot.reconcile_stopped_flat()
+        self.assertEqual(bot.S.intents[-1]["status"], "unknown")
+        self.assertEqual(bot.S.alert, "Unknown account/order outcome; manual review required")
+        self.assertTrue(bot.unknown_orders())
+        bot.S.alert = other
+        self.assertFalse(bot.release_resolved_order_alert())
+        self.assertEqual(bot.S.alert, other)
+        self.assertEqual(bot.S.mode, "stopped")
+        await bot.open_round("S", bot.now_ms(), 250.0, -50.0)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(bot.S.mode, "stopped")
+
+        class Req:
+            headers = {}
+            async def json(self):
+                return {"mode": "live"}
+        bot.LIVE_ENABLED = True
+        bot.S.loss["ready"] = False
+        bot.S.loss["anomaly"] = "权益或现金流数据异常，需人工核对基线"
+        response = json.loads((await bot.h_mode(Req())).body.decode())
+        self.assertFalse(response["ok"])
+        self.assertEqual(bot.S.mode, "stopped")
+        self.assertEqual(inited, [])
 
     async def test_loss_default_blocks_until_fresh_bilateral_equity(self):
         bot.S.loss = bot.default_loss_state()

@@ -302,21 +302,100 @@ def assemble_cursor_pages(pages, key):
         seen.append(cursor)
     return dict(rows=None, complete=False, reason="page-cap", pages_used=len(pages), empty_pages=False)
 
-async def _lighter_history(method, key, **kwargs):
-    client = getattr(V, "lt", None)
-    tx_api = getattr(client, "tx_api", None)
-    if tx_api is None or not hasattr(tx_api, method):
+READ_TOKEN_TTL = 10 * 60
+_READONLY = {"client": None, "lock": None}
+_HISTORY_METHODS = ("deposit_history", "withdraw_history", "transfer_history")
+
+class ReadonlyHistory:
+    """TransactionApi plus a short-lived read token. It has no order or leverage methods."""
+    def __init__(self, api_client, tx_api, token, deadline):
+        self.api_client = api_client
+        self.tx_api = tx_api
+        self.token = token
+        self.deadline = deadline
+    def valid(self):
+        return isinstance(self.token, str) and bool(self.token) and time.time() < self.deadline - 30
+    async def close(self):
+        client = self.api_client
+        self.api_client = None
+        self.tx_api = None
+        self.token = None
+        if client is not None:
+            await client.close()
+
+async def open_readonly_lighter():
+    """Open a read-only Lighter history client.
+
+    The long-lived object is ApiClient plus TransactionApi. A signer is constructed
+    only when no read-only token is configured, and only long enough to mint the
+    documented 10-minute auth token. It is closed before this function returns.
+    update_leverage, send, and cancel are not called. V.lt is not assigned.
+    """
+    signer = None
+    api_client = None
+    try:
+        import lighter
+        account = int(ENV("LIGHTER_ACCOUNT_INDEX", "0") or 0)
+        configuration = lighter.Configuration(host=LT_URL)
+        api_client = lighter.ApiClient(configuration)
+        tx_api = lighter.TransactionApi(api_client)
+        stored = ENV("LIGHTER_READ_ONLY_TOKEN", "")
+        if isinstance(stored, str) and stored.startswith("ro:"):
+            return ReadonlyHistory(api_client, tx_api, stored, time.time() + READ_TOKEN_TTL)
+        key_index, private = ENV("LIGHTER_API_KEY_INDEX", ""), ENV("LIGHTER_API_PRIVATE_KEY", "")
+        if not key_index or not private:
+            await api_client.close()
+            api_client = None
+            return None
+        signer = lighter.SignerClient(url=LT_URL, account_index=account, api_private_keys={int(key_index): private})
+        auth, err = signer.create_auth_token_with_expiry(READ_TOKEN_TTL)
+        if err or not isinstance(auth, str) or not auth:
+            await api_client.close()
+            api_client = None
+            return None
+        return ReadonlyHistory(api_client, tx_api, auth, time.time() + READ_TOKEN_TTL)
+    except Exception:
+        if api_client is not None:
+            try: await api_client.close()
+            except Exception: pass
         return None
-    pair = client.create_auth_token_with_expiry()
-    if not isinstance(pair, tuple) or len(pair) != 2 or pair[1] or not isinstance(pair[0], str) or not pair[0]:
+    finally:
+        if signer is not None:
+            try: await signer.close()
+            except Exception: pass
+
+async def readonly_lighter():
+    """Reuse the read client. A stopped process can call this without V.init."""
+    if _READONLY["lock"] is None:
+        _READONLY["lock"] = asyncio.Lock()
+    async with _READONLY["lock"]:
+        client = _READONLY["client"]
+        if client is not None and client.valid():
+            return client
+        if client is not None:
+            try: await client.close()
+            except Exception: pass
+        client = await open_readonly_lighter()
+        _READONLY["client"] = client
+        return client
+
+async def _lighter_history(method, key, **kwargs):
+    if method not in _HISTORY_METHODS:
+        return None
+    reader = await readonly_lighter()
+    tx_api = getattr(reader, "tx_api", None)
+    if reader is None or tx_api is None or not hasattr(tx_api, method) or not reader.token:
         return None
     pages, seen, cursor = [], [], None
     for _ in range(LIGHTER_PAGE_CAP):
         call = dict(kwargs)
         if cursor:
             call["cursor"] = cursor
-        call["authorization"] = pair[0]
-        payload = await getattr(tx_api, method)(**call)
+        call["authorization"] = reader.token
+        try:
+            payload = await asyncio.wait_for(getattr(tx_api, method)(**call), ACCOUNT_READ_TIMEOUT)
+        except Exception:
+            return None
         parsed = _history_page(payload, key)
         if parsed is None:
             return dict(rows=None, complete=False, reason="malformed", pages_used=len(pages) + 1, empty_pages=False)
@@ -486,8 +565,6 @@ async def poll_balances():
                     BAL["lt"] = dict(collateral=float(a.get("collateral", 0)), avail=float(a.get("available_balance", 0)),
                                      equity=finite_num(a.get("total_asset_value")), l1=a.get("l1_address") if isinstance(a.get("l1_address"), str) else None,
                                      pos=pos, liq=liqLt, t=now_ms())
-                if not DRY_RUN and BAL.get("io") and BAL.get("lt"):
-                    await note_official_equity(s)
             if not keychk and li and ENV("LIGHTER_API_PRIVATE_KEY") and ENV("LIGHTER_API_KEY_INDEX"):
                 import lighter
                 c = lighter.SignerClient(url=LT_URL, account_index=int(li), api_private_keys={int(ENV("LIGHTER_API_KEY_INDEX")): ENV("LIGHTER_API_PRIVATE_KEY")})
@@ -497,6 +574,9 @@ async def poll_balances():
                 BAL["ltKey"] = "OK" if err is None else f"私钥与 key index {ENV('LIGHTER_API_KEY_INDEX')} 登记的公钥不匹配"
                 keychk = True
                 S.note("sys" if err is None else "err", f"密钥自检：io={BAL.get('ioKey')}  Lighter={BAL['ltKey']}")
+            if not DRY_RUN and BAL.get("io") and BAL.get("lt"):
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=ACCOUNT_READ_TIMEOUT)) as equity_session:
+                    await note_official_equity(equity_session)
         except Exception as e:
             log.warning("balances: %s", e)
         await asyncio.sleep(10 if S.pos else 30)
@@ -1258,6 +1338,98 @@ def positions_known(*values):
 
 def unknown_orders():
     return any(i.get("status") not in ("rejected", "terminal_dry", "terminal") for i in S.intents)
+
+ORDER_ALERTS_CLEARED_WHEN_RESOLVED = (
+    "Unknown account/order outcome; manual review required",
+    "Unknown order outcome; manual review required",
+)
+
+def release_resolved_order_alert():
+    """Clear only the alert whose order-unknown cause is gone.
+
+    A stopped flat book with no remaining non-terminal intent can drop that
+    exact text. Any other alert, including exposure, loss, or a still-unknown
+    order, stays where it is. This does not change mode.
+    """
+    if S.mode != "stopped" or S.pos or S.exit_pending or S.recovery or unknown_orders():
+        return False
+    if S.alert not in ORDER_ALERTS_CLEARED_WHEN_RESOLVED:
+        return False
+    S.alert = None
+    S.save()
+    return True
+
+def exposure_from_official(io_state, lt_state):
+    """Signed positions from the public clearinghouse and account reads. None if the payload is not usable."""
+    if not isinstance(io_state, dict) or not isinstance(lt_state, dict) or lt_state.get("code", 200) != 200:
+        return None
+    if not isinstance(io_state.get("assetPositions"), list):
+        return None
+    accounts = lt_state.get("accounts")
+    if not isinstance(accounts, list) or not accounts or not isinstance(accounts[0], dict):
+        return None
+    if not isinstance(accounts[0].get("positions"), list):
+        return None
+    pio = 0.0
+    for item in io_state["assetPositions"]:
+        position = item.get("position") if isinstance(item, dict) else None
+        if isinstance(position, dict) and position.get("coin") == COIN:
+            value = finite_num(position.get("szi"))
+            if value is None:
+                return None
+            pio = value
+    plt = 0.0
+    for item in accounts[0]["positions"]:
+        if not isinstance(item, dict) or item.get("market_id") != MID:
+            continue
+        size, sign = finite_num(item.get("position")), item.get("sign")
+        if size is None or size < 0 or sign not in (-1, 1, "-1", "1"):
+            return None
+        plt = size * int(sign)
+    if not positions_known(pio, plt):
+        return None
+    return pio, plt
+
+async def fetch_official_positions():
+    addr = ENV("HL_ACCOUNT_ADDRESS", "")
+    account = ENV("LIGHTER_ACCOUNT_INDEX", "")
+    if not (isinstance(addr, str) and addr.startswith("0x") and len(addr) == 42 and account):
+        return None
+    timeout = aiohttp.ClientTimeout(total=ACCOUNT_READ_TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        io_state = await hl_post(session, {"type": "clearinghouseState", "user": addr, "dex": "io"})
+        async with session.get(f"{LT_API}/account", params=dict(by="index", value=account)) as response:
+            lt_state = await response.json(content_type=None)
+    return io_state, lt_state
+
+async def reconcile_stopped_flat():
+    """Read-only reconcile while stopped with no local position.
+
+    Does not call V.init, set leverage, send, or cancel, and does not change mode.
+    A failed read leaves intents and alerts alone.
+    """
+    if DRY_RUN or S.mode != "stopped" or S.pos or S.busy:
+        return
+    try:
+        fetched = await asyncio.wait_for(fetch_official_positions(), ACCOUNT_READ_TIMEOUT)
+    except Exception:
+        return
+    if not isinstance(fetched, tuple) or len(fetched) != 2:
+        return
+    exposure = exposure_from_official(*fetched)
+    if exposure is None:
+        return
+    S.actual = dict(io=exposure[0], lt=exposure[1], t=now_ms())
+    await V.reconcile_orders(exposure)
+    release_resolved_order_alert()
+
+async def monitor_stopped_book():
+    while True:
+        try:
+            await reconcile_stopped_flat()
+        except Exception as e:
+            log.warning("stopped reconcile: %s", e)
+        await asyncio.sleep(10)
 
 def loss_blocks_open():
     """Block a new entry when the combined-equity limit is latched, stale, or not initialized.
@@ -2585,6 +2757,10 @@ async def h_mode(req):
     if m == "live":
         if not LIVE_ENABLED: return web.json_response(dict(ok=False, err="服务器 .env 未设置 LIVE_ENABLED=1"))
         if S.pos and not S.pos.get("live"): return web.json_response(dict(ok=False, err="先平掉模拟持仓再切实盘"))
+        if not DRY_RUN and (not S.loss.get("ready") or S.loss.get("anomaly") or not S.loss.get("baseline")):
+            return web.json_response(dict(ok=False, err=S.loss.get("anomaly") or "亏损基线未就绪，不能切换 live"))
+        if unknown_orders() or S.recovery or (S.exit_pending and S.exit_pending.get("submitted")):
+            return web.json_response(dict(ok=False, err="未确认订单或退出尚未完成，不能切换 live"))
         if not V.ready: await V.init()
         if not V.ready: return web.json_response(dict(ok=False, err=V.err))
     if m == "paper" and (S.recovery or unknown_orders() or S.exit_pending or (S.pos and S.pos.get("live"))): return web.json_response(dict(ok=False, err="有实盘持仓，先一键全平"))
@@ -2631,7 +2807,7 @@ async def main():
     run = web.AppRunner(app); await run.setup(); await web.TCPSite(run, BIND, PORT).start()
     log.info("控制面板: http://%s:%d  模式=%s LIVE_ENABLED=%s DRY_RUN=%s", BIND, PORT, S.mode, LIVE_ENABLED, DRY_RUN)
     await start_public()
-    await asyncio.gather(ws_io(), ws_lt(), poll_funding(), poll_balances(), engine(), push_status())
+    await asyncio.gather(ws_io(), ws_lt(), poll_funding(), poll_balances(), monitor_stopped_book(), engine(), push_status())
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:

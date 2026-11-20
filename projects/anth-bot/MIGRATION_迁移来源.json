@@ -6,7 +6,7 @@
       "source": "bot.py",
       "source_sha256": "6e7c61daa866ce0f5f7e28571f2518fa5826a2ce8b5f1dae3a0813d402fc4494",
       "target": "bot.py",
-      "target_sha256": "f28d9ee12f51007594ae9b1969fcc28c0971e5e539712ed4ea886851d85f6141"
+      "target_sha256": "28eb033a3c549533f60837875c0ecfd2cf856e9358cccb58cba5d764edcd4443"
     },
     {
       "source": "simtest.py",
@@ -33,5 +33,5 @@
     "historical fills and account tests"
   ],
   "production_modified": false,
-  "maintenance_note": "History-reconcile and loss-limit logic updated in the public archive only. Source hash remains the original migration snapshot. Target hash is the maintained offline file. Do not copy it over production."
+  "maintenance_note": "Stopped-mode read-only cashflow and flat reconcile were added in the public archive only. Source hash remains the original migration snapshot. Target hash is the maintained offline file. Do not copy it over production."
 }
