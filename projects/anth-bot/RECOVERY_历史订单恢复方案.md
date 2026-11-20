@@ -12,7 +12,7 @@
 - `#13` / `#14`（2026-11-20 开仓，official id `0xd3f20e389bb4ce210e72c85907601ece` 与 `13096582632427`）从 `terminal` 变成 `terminal_wait`，`filled` 0.126 和官方订单证据还在。
 - 随后的平仓 `#15` / `#16` 仍是 `terminal`，`filled` 0.126。
 
-代码在发单前写 intent 和 `[order]` 日志。这两样都没有，所以这次开仓没有走到发单。两所当时仓位和挂单为 0。Hyperliquid 官方在该窗口的订单和 fills 为 0。Lighter 最近 50 笔公开成交窗口为 0，但其私有历史接口未签名返回 400。公开窗口为空不能证明绝对没有发单。
+代码在发单前写 intent 和 `[order]` 日志。这两样都没有，所以这次开仓没有走到发单。两所当时仓位和挂单为 0。后续已签名的 Lighter 只读查询确认 `#2` / `#3` 都是 filled 0.174，成交明细合计与订单 `filled_base_amount` 一致；03:30–04:05 的 Lighter 非活跃订单、活跃订单和认证成交都是 0。Hyperliquid 当前仓位和挂单也是 0。这些是主助手授权的只读采集，不是本仓库重新连上的账户。
 
 这不是一笔新的已提交未知订单。它是旧的已结算订单被按当前净持仓重新判定，污染了新会话。真正缺官方终态的新订单仍然要停在未知，不能用这份方案去填成交。
 
@@ -29,11 +29,11 @@
 1. 再复制一份当前 `state.json`。不要覆盖 03:34:15 备份。本工具不代替这一步，也不改服务器文件。
 2. 不要靠再跑一遍 `8ac037…` 自己修好。旧程序会继续按当前持仓改写。
 3. `#13` / `#14`：证据仍是官方订单、`filled` 仍是 0.126，且同所已有更晚的平仓终态。新对账会把它们从 `terminal_wait` 调回 `terminal`，不改数量。这是恢复被错误降级的官方终态，不是新造一笔成交。不需要 `audit_restore_intent`。
-4. `#2` / `#3` 只能逐条提案，而且官方成交记录必须来自主助手运维的只读查询，不能来自人工填写的数量。公开成交窗口里见过 client id，并不等于本工具已经拿到那笔成交的官方记录。
+4. `#2` / `#3` 只能用授权只读采集里的订单和成交明细逐条提案。手填的 0.174，或只有 `source` 字符串而没有成交明细的文件，都会被拒绝。`source` 不是密码学签名。
 5. `#2` / `#3` 仍是 unknown 时，保留 03:37 的本地开仓标记和退出标记。没有新 intent 不代表可以删标记。
-6. 03:37:08 到 03:37:10 是否发出新单，要等已签名的 Lighter 私有历史只读结果。未签名的 400 不能当作没发单。Hyperliquid 该窗口订单和 fills 为 0，只说明这一侧的官方查询没有看到新单。
-7. 两条 unknown 都有了只读查询提案、未知列表为空，并且签名历史没有新 client id 之后，才可以另做一步：删掉 03:37 这个没有对应 intent 的本地标记。不删那 16 条 intent，不把模式改成 live，不改 3x / 290U / 40bp。
-8. 若签名历史看到了新订单，停在这里。那是真实未知：不重发、不平未知腿、不把空仓当成已核实。
+6. 窗口文件必须同时给出两边的 `orders=0`、`fills=0`、`code=200`，以及官方仓位 0/0，并且覆盖标记时间。缺任何一边，脚本保留标记。
+7. 脚本在这些条件都成立时，提案里才会把没有对应 intent 的 03:37 标记清掉。它不删除 16 条 intent，不把模式改成 live，不改 3x / 290U / 40bp。`#13` / `#14` 保持原样，等新对账处理。
+8. 若窗口文件里任一侧不是 0，停在这里。那是真实未知：不重发、不平未知腿、不把空仓当成已核实。
 
 ## audit_restore_intent 的离线用法
 
@@ -45,23 +45,36 @@ python3 audit_restore_offline.py current.json backup.json official.json
 
 在不含 `.env` 的空目录里运行，旁边只放 `bot.py` 和这三个 JSON。命令拒绝联网。退出码 0 只在标准输出打印提案，并且 `wrote` 为 false。退出码 2 是拒绝。它不修改输入文件。
 
-`official.json` 必须是运维只读查询留下的对象，至少包含：
+`official.json` 必须是授权只读采集留下的对象。单独的 `source` 字符串不够。至少包含：
 
-- `source`：`official-order` 或 `official-submission`
-- `official_id`：与当前记录、备份记录相同
+- `collection.chain`：`ops-readonly-authorized`
+- `collection.reader`：非空的采集名称
+- `collection.queries`：非空的接口名列表
+- `order.status`：`filled`
+- `order.client_order_index`：与当前记录、备份记录相同
+- `order.filled_base_amount`：有限正数，并且等于备份 `terminal_evidence.filled`
+- `trades`：至少一条，`size` 合计等于 `filled_base_amount`
 - `venue`：`io` 或 `lt`，三边相同
-- `filled`：有限正数，并且等于备份 `terminal_evidence.filled`
 
-可以带 `state` 和 `oid`。下面任一情况都拒绝，当前记录保持原样：
+下面任一情况都拒绝，当前记录保持原样：
 
-- `official` 是数字、字符串，或没有 `source`
-- `source` 不是上面两个官方值（包括 `manual`）
+- `official` 是数字、字符串，或只有 `filled`
+- `source` 是 `manual`，或采集链不是上面的值
+- 成交明细合计与订单数量或备份数量不一致
 - 当前状态不是 `unknown`，或当前已经有官方终态证据
-- 备份不是 `terminal`，或备份没有可比较的 `filled`
+- 备份不是 `terminal`
 - `official_id` 或 `venue` 任何一边不一致
-- 查询到的 `filled` 与备份 `filled` 不一致
 
-一条提案只覆盖一个 official id。恢复 `#2` 不会让 `#3` 变成已知，也不会移除本地开仓标记。提案上的 `audit_note` 是 `proposal-only-from-ops-readonly-query`，表示它还没有被写进状态。
+一条提案只覆盖一个 official id。恢复 `#2` 不会让 `#3` 变成已知，也不会移除本地开仓标记。提案上的 `audit_note` 是 `proposal-only-from-authorized-readonly-fixture`。
+
+整份状态的审查命令默认不写文件：
+
+```bash
+python3 restore_state_offline.py current.json backup.json official.json window.json
+python3 restore_state_offline.py current.json backup.json official.json window.json --output proposal.json
+```
+
+`official.json` 的 `records` 里只放要恢复的 `#2` / `#3`。`window.json` 带同样的 `collection`，以及 `start_ms`、`end_ms`、`positions` 和两边的 `venues`。`--output` 不能是已有文件，不能叫 `state.json`，也不能等于任一输入。写出的文件以 `ANTH_RESTORE_PROPOSAL` 开头，不是可加载的 `state.json`。标准输出里的 diff 给运维看。命令不改输入，不联网。
 
 ## 和亏损上限的关系
 

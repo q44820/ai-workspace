@@ -18,6 +18,16 @@ def intent(venue, purpose, t, official_id, filled, source=None, status="terminal
                 reduce=purpose == "平仓", pre=dict(io=0.0, lt=0.0), submitted=True, terminal_evidence=evidence)
 
 
+COLLECTION = dict(chain="ops-readonly-authorized", reader="t217-official-history-audit",
+                  queries=["account_inactive_orders", "trades"])
+
+
+def official_record(official_id, sizes):
+    return dict(venue="lt", official_id=official_id, collection=COLLECTION,
+                order=dict(status="filled", client_order_index=official_id, filled_base_amount=sum(sizes), order_index="oid"),
+                trades=[dict(size=size) for size in sizes])
+
+
 def backup_round(base):
     """The 2026-11-21 03:34 backup shape: a completed open and close, all terminal, flat now."""
     return [
@@ -112,17 +122,18 @@ class HistoryReconcileTests(harness.ExecutionTests):
     def test_audit_restore_requires_ops_query_not_a_typed_number(self):
         current = dict(official_id=113917744074459, venue="lt", status="unknown")
         backup = intent("lt", "开仓", 1, 113917744074459, 0.174)
-        official = dict(source="official-order", official_id=113917744074459, venue="lt", filled=0.174, state="filled", oid=1002)
+        official = official_record(113917744074459, (0.11397, 0.06003))
         self.assertIsNone(bot.audit_restore_intent(current, backup, None))
         self.assertIsNone(bot.audit_restore_intent(current, backup, 0.174))
+        self.assertIsNone(bot.audit_restore_intent(current, backup, dict(source="official-order", official_id=113917744074459, venue="lt", filled=0.174)))
         self.assertIsNone(bot.audit_restore_intent(current, backup, dict(official, source="manual")))
-        self.assertIsNone(bot.audit_restore_intent(current, backup, dict(official, filled=0.1)))
-        self.assertIsNone(bot.audit_restore_intent(current, backup, dict(official, official_id=1)))
+        self.assertIsNone(bot.audit_restore_intent(current, backup, official_record(113917744074459, (0.1, 0.07))))
+        self.assertIsNone(bot.audit_restore_intent(current, backup, official_record(1, (0.11397, 0.06003))))
         restored = bot.audit_restore_intent(current, backup, official)
         self.assertEqual(restored["status"], "terminal")
         self.assertEqual(restored["terminal_evidence"]["filled"], 0.174)
         self.assertEqual(restored["terminal_evidence"]["source"], "official-order")
-        self.assertEqual(restored["audit_note"], "proposal-only-from-ops-readonly-query")
+        self.assertEqual(restored["audit_note"], "proposal-only-from-authorized-readonly-fixture")
         self.assertEqual(current["status"], "unknown")
         self.assertNotIn("terminal_evidence", current)
         held = dict(current, terminal_evidence=dict(source="official-order", filled=0.174))
@@ -145,6 +156,138 @@ class HistoryReconcileTests(harness.ExecutionTests):
             self.assertFalse(body["wrote"])
             self.assertEqual(body["terminal_evidence"]["filled"], 0.174)
             self.assertFalse((root / "state.json").exists())
+
+    def test_real_withdraw_cursor_cycle_is_not_a_verified_zero(self):
+        cursor = "c" * 32
+        pages = [dict(code=200, cursor=cursor, withdraws=[]) for _ in range(8)]
+        walked = bot.assemble_cursor_pages(pages, "withdraws")
+        self.assertFalse(walked["complete"])
+        self.assertEqual(walked["reason"], "cursor-cycle")
+        self.assertEqual(walked["pages_used"], 2)
+        self.assertTrue(walked["empty_pages"])
+        self.assertIsNone(bot.verified_lighter_withdrawals(walked, None))
+        ended = bot.assemble_cursor_pages([
+            dict(code=200, cursor="next", deposits=[dict(id="d1", asset_id=3, timestamp=1, status="completed", amount="1")]),
+            dict(code=200, cursor="", deposits=[dict(id="d1", asset_id=3, timestamp=1, status="completed", amount="1")]),
+        ], "deposits")
+        self.assertTrue(ended["complete"])
+        self.assertEqual(len(ended["rows"]), 1)
+        transfers = bot.assemble_cursor_pages([
+            dict(code=200, cursor="t", transfers=[]),
+            dict(code=200, cursor="", transfers=[]),
+        ], "transfers")
+        self.assertTrue(transfers["complete"])
+        self.assertEqual(transfers["rows"], [])
+        conflict = bot.assemble_cursor_pages([
+            dict(code=200, cursor="a", deposits=[dict(id="d1", amount="1")]),
+            dict(code=200, cursor="", deposits=[dict(id="d1", amount="2")]),
+        ], "deposits")
+        self.assertFalse(conflict["complete"])
+        self.assertEqual(conflict["reason"], "id-conflict")
+
+    def test_explorer_short_page_can_cover_only_the_empty_cursor_cycle(self):
+        cursor = "c" * 32
+        primary = bot.assemble_cursor_pages([dict(code=200, cursor=cursor, withdraws=[]), dict(code=200, cursor=cursor, withdraws=[])], "withdraws")
+        since = 1_700_000_000_000
+        empty_logs = bot.assemble_explorer_withdrawals([[]], 7, 3, since)
+        self.assertTrue(empty_logs["complete"])
+        self.assertEqual(bot.verified_lighter_withdrawals(primary, empty_logs), [])
+        filled = bot.assemble_explorer_withdrawals([[{
+            "hash": "h1", "pubdata_type": "WithdrawV2", "status": "executed", "time": since + 1000,
+            "pubdata": {"withdraw_pubdata_v2": {"amount": "1.5", "asset_index": "3", "from_account_index": "7", "route_type": "fast"}},
+        }]], 7, 3, since)
+        rows = bot.verified_lighter_withdrawals(primary, filled)
+        self.assertEqual(rows[0]["status"], "completed")
+        self.assertEqual(bot.classify_lt_cashflow([], rows, [], 7, 3, since), -1.5)
+        full = [dict(hash=str(i), pubdata_type="Withdraw", status="executed", time=since - 1000,
+                     pubdata={"withdraw_pubdata": {"usdc_amount": "1", "from_account_index": "7"}}) for i in range(bot.EXPLORER_LOG_LIMIT)]
+        truncated = bot.assemble_explorer_withdrawals([full], 7, 3, since)
+        self.assertFalse(truncated["complete"])
+        self.assertIsNone(bot.verified_lighter_withdrawals(primary, truncated))
+        partial = bot.assemble_cursor_pages([
+            dict(code=200, cursor="a", withdraws=[dict(id="w", asset_id=3, timestamp=2000, status="completed", amount="1")]),
+            dict(code=200, cursor="a", withdraws=[]),
+        ], "withdraws")
+        self.assertIsNone(bot.verified_lighter_withdrawals(partial, empty_logs))
+
+    def test_hl_send_before_baseline_is_ignored_and_inside_window_fails_closed(self):
+        since = 1_700_000_000_000
+        send = dict(time=since - 1, hash="0x" + "ab" * 32, delta={
+            "type": "send", "user": "0xabc", "destination": "0xdef", "sourceDex": "", "destinationDex": "spot",
+            "token": "USDC", "amount": "12.5", "usdcValue": "12.5", "fee": "0", "feeToken": "", "nonce": 1,
+        })
+        deposit = dict(time=since, delta={"type": "deposit", "usdc": "4"})
+        self.assertEqual(bot.classify_hl_cashflow([send, deposit], "0xabc", since), 4)
+        self.assertIsNone(bot.classify_hl_cashflow([dict(send, time=since)], "0xabc", since))
+        both = [dict(time=since, delta={"type": "internalTransfer", "usdc": "2", "user": "0xabc", "destination": "0xdef"}), dict(send, time=since)]
+        self.assertIsNone(bot.classify_hl_cashflow(both, "0xabc", since))
+        now = bot.now_ms()
+        bot.S.loss = bot.default_loss_state()
+        bot.observe_loss_sample(100, 100, now, now, 0.0, now)
+        baseline = dict(bot.S.loss["baseline"])
+        bot.observe_loss_sample(100, 100, now, now, None, now)
+        self.assertEqual(bot.S.loss["baseline"], baseline)
+        self.assertFalse(bot.S.loss["ready"])
+        self.assertIsNone(bot.S.loss.get("resetAt"))
+
+    def test_restore_proposal_keeps_every_intent_and_clears_marker_only_with_window(self):
+        base = 1_794_902_400_000
+        rows = backup_round(base)
+        current_rows = [dict(row) for row in rows]
+        for row in current_rows[:2]:
+            row["status"] = "unknown"
+            row.pop("terminal_evidence")
+        for row in current_rows[2:4]:
+            row["status"] = "terminal_wait"
+        marker_t = 1_795_203_429_611
+        current = dict(mode="live", intents=current_rows, exit_pending=dict(submitted=True, why="开仓", t=marker_t),
+                       pos=dict(dir="S", opening_pending=True, entryAccountingUnknown=True, first_open_intent=None))
+        backup = dict(intents=rows)
+        official = dict(collection=COLLECTION, records=[
+            official_record(113917744074459, (0.11397, 0.06003)),
+            official_record(204835031781534, (0.12441, 0.04959)),
+        ])
+        window = dict(collection=COLLECTION, start_ms=1_795_203_000_000, end_ms=1_795_205_107_000,
+                      positions=dict(io=0, lt=0),
+                      venues=dict(io=dict(code=200, orders=0, fills=0), lt=dict(code=200, orders=0, fills=0, active_orders=0)))
+        missing = bot.propose_polluted_state(current, backup, official, {})
+        self.assertTrue(missing["ok"])
+        self.assertEqual(missing["restored_ids"], ["113917744074459", "204835031781534"])
+        self.assertFalse(missing["marker"]["cleared"])
+        self.assertEqual(missing["proposed_intents"][2]["status"], "terminal_wait")
+        self.assertEqual(missing["proposed_exit_pending"]["submitted"], True)
+        self.assertEqual(missing["intent_count"], 6)
+        self.assertFalse(missing["loadable_state"])
+        opened = bot.propose_polluted_state(current, backup, official, window)
+        self.assertTrue(opened["marker"]["cleared"])
+        self.assertIsNone(opened["proposed_pos"])
+        self.assertIsNone(opened["proposed_exit_pending"])
+        self.assertEqual(opened["mode"], "live")
+        self.assertIn("current", opened["diff"])
+        self.assertFalse(bot.propose_polluted_state(current, backup, dict(official, records=[dict(official_id=113917744074459, venue="lt", filled=0.174)]), window)["ok"])
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {}
+            for name, payload in (("current.json", current), ("backup.json", backup), ("official.json", official), ("window.json", window)):
+                paths[name] = root / name
+                paths[name].write_text(json.dumps(payload))
+            script = bot.HERE / "restore_state_offline.py"
+            dry = subprocess.run([sys.executable, str(script), *[str(paths[name]) for name in ("current.json", "backup.json", "official.json", "window.json")]], capture_output=True, text=True)
+            self.assertEqual(dry.returncode, 0, dry.stderr)
+            body = json.loads(dry.stdout)
+            self.assertTrue(body["dry_run"])
+            self.assertFalse(body["proposal_file_written"])
+            self.assertEqual(set(root.iterdir()), set(paths.values()))
+            target = root / "proposal.json"
+            written = subprocess.run([sys.executable, str(script), *[str(paths[name]) for name in paths], "--output", str(target)], capture_output=True, text=True)
+            self.assertEqual(written.returncode, 0, written.stderr)
+            self.assertTrue(target.exists())
+            self.assertTrue(target.read_text().startswith("ANTH_RESTORE_PROPOSAL"))
+            self.assertEqual(json.loads((root / "current.json").read_text())["intents"][0]["status"], "unknown")
+            blocked = subprocess.run([sys.executable, str(script), *[str(paths[name]) for name in paths], "--output", str(root / "current.json")], capture_output=True, text=True)
+            self.assertEqual(blocked.returncode, 2)
+            self.assertEqual(json.loads((root / "current.json").read_text())["intents"][0]["status"], "unknown")
 
     async def test_loss_default_blocks_until_fresh_bilateral_equity(self):
         bot.S.loss = bot.default_loss_state()

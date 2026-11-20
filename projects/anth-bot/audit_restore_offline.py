@@ -5,9 +5,11 @@ Usage, from an empty directory that contains this file, bot.py, and no .env:
 
     python3 audit_restore_offline.py current.json backup.json official.json
 
-official.json is the ops read-only query record. A hand-typed quantity is not
-that record. Required fields: source (official-order or official-submission),
-official_id, venue (io or lt), filled. Optional: state, oid.
+official.json is one authorized read-only collection record. A hand-typed
+quantity is not that record, and a source string is not a signature. Required:
+collection.chain ops-readonly-authorized, collection.reader, collection.queries,
+order.status filled, order.client_order_index, order.filled_base_amount, trades
+whose sizes sum to that amount, venue, and the same official id as the backup.
 
 The command refuses when any input is missing, the three records disagree, the
 current row is not unknown, or the current row already has official evidence.

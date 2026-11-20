@@ -237,10 +237,17 @@ def lighter_usdc_asset_id():
         return None
     return None
 
+LIGHTER_PAGE_CAP = 8
+EXPLORER_LOG_LIMIT = 100
+EXPLORER_LOGS = "https://explorer.elliot.ai/api/accounts/{account}/logs"
+
 def _history_page(payload, key):
     if hasattr(payload, "to_dict"):
         payload = payload.to_dict()
     if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+        return None
+    code = payload.get("code")
+    if code is not None and code != 200:
         return None
     rows = []
     for row in payload[key]:
@@ -249,10 +256,51 @@ def _history_page(payload, key):
         if not isinstance(row, dict):
             return None
         rows.append(row)
-    cursor = payload.get("cursor") or ""
+    cursor = payload.get("cursor")
+    if cursor is None:
+        cursor = ""
     if not isinstance(cursor, str):
         return None
     return rows, cursor
+
+def assemble_cursor_pages(pages, key):
+    """Fold cursor pages. Complete only when a page returns cursor "".
+
+    The Lighter OpenAPI requires cursor and says to pass it back unchanged.
+    It does not define an empty withdraws list plus a repeated cursor as the end
+    of an empty ledger. Deposit and transfer reads have been observed to end with
+    cursor "". A repeated non-empty cursor stops the walk and stays unverified.
+    """
+    if not isinstance(pages, list) or not pages:
+        return dict(rows=None, complete=False, reason="no-pages", pages_used=0, empty_pages=False)
+    seen, rows, ids = [], [], {}
+    empty_pages = True
+    for index, payload in enumerate(pages):
+        if index >= LIGHTER_PAGE_CAP:
+            return dict(rows=None, complete=False, reason="page-cap", pages_used=LIGHTER_PAGE_CAP, empty_pages=False)
+        parsed = _history_page(payload, key)
+        if parsed is None:
+            return dict(rows=None, complete=False, reason="malformed", pages_used=index + 1, empty_pages=False)
+        chunk, cursor = parsed
+        if chunk:
+            empty_pages = False
+        for row in chunk:
+            row_id = row.get("id")
+            if row_id is None:
+                rows.append(row)
+                continue
+            previous = ids.get(row_id)
+            if previous is None:
+                ids[row_id] = row
+                rows.append(row)
+            elif previous != row:
+                return dict(rows=None, complete=False, reason="id-conflict", pages_used=index + 1, empty_pages=False)
+        if cursor == "":
+            return dict(rows=rows, complete=True, reason="empty-cursor", pages_used=index + 1, empty_pages=empty_pages)
+        if cursor in seen:
+            return dict(rows=None, complete=False, reason="cursor-cycle", pages_used=index + 1, empty_pages=empty_pages)
+        seen.append(cursor)
+    return dict(rows=None, complete=False, reason="page-cap", pages_used=len(pages), empty_pages=False)
 
 async def _lighter_history(method, key, **kwargs):
     client = getattr(V, "lt", None)
@@ -262,20 +310,108 @@ async def _lighter_history(method, key, **kwargs):
     pair = client.create_auth_token_with_expiry()
     if not isinstance(pair, tuple) or len(pair) != 2 or pair[1] or not isinstance(pair[0], str) or not pair[0]:
         return None
-    rows, cursor = [], None
-    for _ in range(8):
+    pages, seen, cursor = [], [], None
+    for _ in range(LIGHTER_PAGE_CAP):
         call = dict(kwargs)
         if cursor:
             call["cursor"] = cursor
         call["authorization"] = pair[0]
-        page = _history_page(await getattr(tx_api, method)(**call), key)
-        if page is None:
-            return None
-        chunk, cursor = page
-        rows.extend(chunk)
-        if not cursor:
-            return rows
+        payload = await getattr(tx_api, method)(**call)
+        parsed = _history_page(payload, key)
+        if parsed is None:
+            return dict(rows=None, complete=False, reason="malformed", pages_used=len(pages) + 1, empty_pages=False)
+        _chunk, cursor = parsed
+        pages.append(payload if isinstance(payload, dict) else {"code": 200, key: _chunk, "cursor": cursor})
+        if cursor == "" or (cursor and cursor in seen):
+            break
+        if cursor:
+            seen.append(cursor)
+    return assemble_cursor_pages(pages, key)
+
+def ledger_time_ms(value):
+    number = finite_num(value)
+    if number is None or number < 1_000_000_000:
+        return None
+    return number * 1000 if number < 10_000_000_000 else number
+
+def assemble_explorer_withdrawals(pages, account_index, usdc_asset_id, since_ms):
+    """Second source: explorer account logs for Withdraw and WithdrawV2.
+
+    A short page (fewer than the requested limit) is the documented offset end.
+    A full page with no shorter successor is truncated and stays unverified.
+    This does not turn a withdraw_history cursor cycle into zero by itself.
+    """
+    if not isinstance(pages, list) or not pages:
+        return dict(rows=None, complete=False, reason="no-pages")
+    account_index = int(account_index)
+    usdc_asset_id = int(usdc_asset_id)
+    rows, seen = [], set()
+    for index, page in enumerate(pages):
+        if index >= LIGHTER_PAGE_CAP or not isinstance(page, list):
+            return dict(rows=None, complete=False, reason="malformed")
+        for log_row in page:
+            if not isinstance(log_row, dict):
+                return dict(rows=None, complete=False, reason="malformed")
+            kind = log_row.get("pubdata_type")
+            if kind not in ("Withdraw", "WithdrawV2"):
+                return dict(rows=None, complete=False, reason="unexpected-log")
+            when = ledger_time_ms(log_row.get("time"))
+            if when is None:
+                return dict(rows=None, complete=False, reason="bad-time")
+            if when < since_ms:
+                continue
+            if log_row.get("status") != "executed":
+                return dict(rows=None, complete=False, reason="unsettled-withdraw")
+            pub = log_row.get("pubdata") if isinstance(log_row.get("pubdata"), dict) else {}
+            if kind == "Withdraw":
+                body = pub.get("withdraw_pubdata") if isinstance(pub.get("withdraw_pubdata"), dict) else None
+                amount = finite_num(body.get("usdc_amount")) if body else None
+                asset = usdc_asset_id
+                owner = body.get("from_account_index") if body else None
+            else:
+                body = pub.get("withdraw_pubdata_v2") if isinstance(pub.get("withdraw_pubdata_v2"), dict) else None
+                amount = finite_num(body.get("amount")) if body else None
+                asset = finite_num(body.get("asset_index")) if body else None
+                owner = body.get("from_account_index") if body else None
+            if amount is None or amount < 0 or asset is None or int(asset) != usdc_asset_id:
+                return dict(rows=None, complete=False, reason="bad-amount")
+            if owner is not None and str(owner) != str(account_index):
+                return dict(rows=None, complete=False, reason="account-mismatch")
+            row_id = log_row.get("hash") or (kind, when, amount)
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            rows.append(dict(id=str(row_id), asset_id=usdc_asset_id, timestamp=when, status="completed", amount=str(amount)))
+        if len(page) < EXPLORER_LOG_LIMIT:
+            return dict(rows=rows, complete=True, reason="short-page")
+    return dict(rows=None, complete=False, reason="page-cap")
+
+def verified_lighter_withdrawals(primary, explorer):
+    """Use withdraw_history when its cursor ends. A sticky empty cursor needs the explorer log."""
+    if not isinstance(primary, dict):
+        return None
+    if primary.get("complete") is True and isinstance(primary.get("rows"), list):
+        return primary["rows"]
+    if (primary.get("reason") == "cursor-cycle" and primary.get("empty_pages") is True
+            and isinstance(explorer, dict) and explorer.get("complete") is True and isinstance(explorer.get("rows"), list)):
+        return explorer["rows"]
     return None
+
+async def _explorer_withdraw_pages(session, account_index):
+    pages = []
+    for page_index in range(LIGHTER_PAGE_CAP):
+        params = [("pub_data_type", "Withdraw"), ("pub_data_type", "WithdrawV2"),
+                  ("limit", str(EXPLORER_LOG_LIMIT)), ("offset", str(page_index * EXPLORER_LOG_LIMIT))]
+        async with session.get(EXPLORER_LOGS.format(account=account_index), params=params) as response:
+            if response.status != 200:
+                return None
+            payload = await response.json(content_type=None)
+        pages.append(payload)
+        if isinstance(payload, list) and len(payload) < EXPLORER_LOG_LIMIT:
+            return pages
+        if not isinstance(payload, list):
+            return None
+    return pages
 
 async def external_inflow(session, since_ms, l1_address):
     """Signed external cash since the baseline. None means the ledger could not be verified."""
@@ -284,16 +420,23 @@ async def external_inflow(session, since_ms, l1_address):
         if not (isinstance(addr, str) and addr.startswith("0x") and len(addr) == 42):
             return None
         hl = await hl_post(session, {"type": "userNonFundingLedgerUpdates", "user": addr, "startTime": int(since_ms)})
-        hl_flow = classify_hl_cashflow(hl if isinstance(hl, list) else None, addr)
+        hl_flow = classify_hl_cashflow(hl if isinstance(hl, list) else None, addr, since_ms)
         asset = lighter_usdc_asset_id()
         if hl_flow is None or asset is None or not isinstance(l1_address, str) or not l1_address:
             return None
         account = int(ENV("LIGHTER_ACCOUNT_INDEX", "0") or 0)
         deposits = await _lighter_history("deposit_history", "deposits", account_index=account, l1_address=l1_address)
-        withdraws = await _lighter_history("withdraw_history", "withdraws", account_index=account)
         transfers = await _lighter_history("transfer_history", "transfers", account_index=account)
-        lt_flow = classify_lt_cashflow(deposits, withdraws, transfers, account, asset, since_ms)
-        if None in (deposits, withdraws, transfers, lt_flow):
+        withdraws = await _lighter_history("withdraw_history", "withdraws", account_index=account)
+        if not deposits or not deposits.get("complete") or not transfers or not transfers.get("complete"):
+            return None
+        explorer = None
+        if isinstance(withdraws, dict) and withdraws.get("reason") == "cursor-cycle" and withdraws.get("empty_pages") is True:
+            log.warning("Lighter withdraw_history cursor cycle with empty pages; withdrawal coverage unverified until explorer logs end")
+            explorer = assemble_explorer_withdrawals(await _explorer_withdraw_pages(session, account), account, asset, since_ms)
+        withdraw_rows = verified_lighter_withdrawals(withdraws, explorer)
+        lt_flow = classify_lt_cashflow(deposits.get("rows"), withdraw_rows, transfers.get("rows"), account, asset, since_ms)
+        if withdraw_rows is None or lt_flow is None:
             return None
         return hl_flow + lt_flow
     except Exception:
@@ -1239,8 +1382,15 @@ def loss_view():
                 equityIo=last.get("io"), equityLt=last.get("lt"), equityTotal=last.get("total"), equityAt=last.get("t"),
                 resetAt=S.loss.get("resetAt"))
 
-def classify_hl_cashflow(entries, address):
-    """Signed external USDC flow. Unknown ledger types fail closed. None means unverified."""
+def classify_hl_cashflow(entries, address, since_ms=None):
+    """Signed external USDC flow. Unknown ledger types fail closed. None means unverified.
+
+    Events strictly before since_ms are outside the baseline window and are ignored,
+    including types this function does not classify. `send` stays outside the allowlist:
+    its documented fields are amount and usdcValue, not usdc, and sourceDex/destinationDex
+    can move value between perp and spot for the same user. That is not the same as an
+    external deposit, and it is not proven to be disjoint from internalTransfer.
+    """
     if not isinstance(entries, list) or not isinstance(address, str):
         return None
     total = 0.0
@@ -1249,7 +1399,16 @@ def classify_hl_cashflow(entries, address):
         delta = entry.get("delta") if isinstance(entry, dict) else None
         if not isinstance(delta, dict):
             return None
-        kind, amount = delta.get("type"), finite_num(delta.get("usdc"))
+        if since_ms is not None:
+            when = ledger_time_ms(entry.get("time"))
+            if when is None:
+                return None
+            if when < since_ms:
+                continue
+        kind = delta.get("type")
+        if kind == "send":
+            return None
+        amount = finite_num(delta.get("usdc"))
         if amount is None:
             return None
         if kind == "deposit":
@@ -1282,10 +1441,7 @@ def _classify_lt_cashflow(deposits, withdraws, transfers, account_index, usdc_as
     usdc_asset_id = int(usdc_asset_id)
     total = 0.0
     def stamp(value):
-        number = finite_num(value)
-        if number is None or number < 1_000_000_000:
-            return None
-        return number * 1000 if number < 10_000_000_000 else number
+        return ledger_time_ms(value)
     for row in deposits or []:
         if not isinstance(row, dict) or row.get("asset_id") is None:
             return None
@@ -1341,21 +1497,51 @@ def _classify_lt_cashflow(deposits, withdraws, transfers, account_index, usdc_as
             return None
     return total
 
-def audit_restore_intent(current, backup, official=None):
-    """Propose one restored intent. Does not write state or invent an official fill.
+def _authorized_collection(payload):
+    collection = payload.get("collection") if isinstance(payload, dict) else None
+    if not isinstance(collection, dict) or collection.get("chain") != "ops-readonly-authorized":
+        return None
+    reader, queries = collection.get("reader"), collection.get("queries")
+    if not isinstance(reader, str) or not reader.strip():
+        return None
+    if not isinstance(queries, list) or not queries or not all(isinstance(item, str) and item.strip() for item in queries):
+        return None
+    return collection
 
-    official must be the ops read-only query record, with source official-order or
-    official-submission, the same official_id and venue, and a filled quantity that
-    matches the backup terminal evidence. A bare number, a missing source, or a
-    hand-typed quantity is refused. Current official evidence is never overwritten.
+def _trade_size_sum(trades):
+    if not isinstance(trades, list) or not trades:
+        return None
+    total = 0.0
+    for trade in trades:
+        if not isinstance(trade, dict):
+            return None
+        size = finite_num(trade.get("size"))
+        if size is None or size <= 0:
+            return None
+        total += size
+    return total
+
+def audit_restore_intent(current, backup, official=None):
+    """Propose one restored intent. Does not write state.
+
+    A source string is not proof. official must be the authorized read-only
+    collection record: order status filled, filled_base_amount, and trade sizes
+    that sum to that amount and to the backup terminal evidence. A bare number,
+    or a source string without those fields, is refused.
     """
     if not isinstance(current, dict) or not isinstance(backup, dict) or not isinstance(official, dict):
         return None
-    if isinstance(official.get("filled"), bool):
+    if _authorized_collection(official) is None:
+        return None
+    if official.get("source") not in (None, "official-order", "official-submission"):
+        return None
+    order = official.get("order")
+    if not isinstance(order, dict) or order.get("status") != "filled":
         return None
     if current.get("official_id") != backup.get("official_id") or current.get("venue") != backup.get("venue"):
         return None
-    if official.get("official_id") != current.get("official_id") or official.get("venue") != current.get("venue"):
+    official_id = order.get("client_order_index", official.get("official_id"))
+    if str(official_id) != str(current.get("official_id")) or official.get("venue") != current.get("venue"):
         return None
     if current.get("status") != "unknown" or official_evidence(current.get("terminal_evidence")):
         return None
@@ -1363,19 +1549,123 @@ def audit_restore_intent(current, backup, official=None):
         return None
     evidence = backup.get("terminal_evidence") if isinstance(backup.get("terminal_evidence"), dict) else None
     backed = finite_num(evidence.get("filled")) if evidence else None
-    queried = finite_num(official.get("filled"))
-    if backed is None or queried is None or backed <= 0 or not math.isclose(queried, backed, rel_tol=0, abs_tol=1e-9):
+    queried = finite_num(order.get("filled_base_amount"))
+    summed = _trade_size_sum(official.get("trades"))
+    typed = official.get("filled")
+    if typed is not None and (finite_num(typed) is None or not math.isclose(finite_num(typed), queried or -1, rel_tol=0, abs_tol=1e-9)):
         return None
-    if official.get("source") not in ("official-order", "official-submission"):
+    if None in (backed, queried, summed) or backed <= 0 or not math.isclose(queried, backed, rel_tol=0, abs_tol=1e-9):
+        return None
+    if not math.isclose(summed, queried, rel_tol=0, abs_tol=1e-9):
         return None
     restored = dict(current)
     restored["status"] = "terminal"
-    restored["terminal_evidence"] = dict(source=official["source"], filled=float(queried), state=official.get("state") or "filled")
-    if official.get("oid") is not None:
-        restored["terminal_evidence"]["oid"] = official["oid"]
-    restored["audit_note"] = "proposal-only-from-ops-readonly-query"
+    restored["terminal_evidence"] = dict(source="official-order", filled=float(queried), state="filled",
+                                         audit_reader=official["collection"]["reader"])
+    if order.get("order_index") is not None:
+        restored["terminal_evidence"]["oid"] = order.get("order_index")
+    restored["audit_note"] = "proposal-only-from-authorized-readonly-fixture"
     restored.pop("prior_evidence", None)
     return restored
+
+def _same_id(left, right):
+    return str(left.get("official_id")) == str(right.get("official_id")) and left.get("venue") == right.get("venue")
+
+def propose_polluted_state(current, backup, official, window=None):
+    """Review-only proposal. Does not write state and does not delete intents.
+
+    Restores unknown rows only when the authorized fixture matches the backup.
+    terminal_wait rows are left for the new reconciler. The 03:37 local marker
+    is cleared only when no unknown remains and the window evidence says both
+    venues had no new order or fill. The returned object is not a loadable state.
+    """
+    refused = dict(ok=False, dry_run=True, applied_to_input=False, wrote_inputs=False,
+                   loadable_state=False, cryptographic_proof=False)
+    if not isinstance(current, dict) or not isinstance(backup, dict) or not isinstance(official, dict):
+        return dict(refused, reason="inputs-must-be-objects")
+    current_intents, backup_intents = current.get("intents"), backup.get("intents")
+    if not isinstance(current_intents, list) or not isinstance(backup_intents, list) or not current_intents:
+        return dict(refused, reason="missing-intents")
+    if len(current_intents) != len(backup_intents):
+        return dict(refused, reason="intent-count-changed")
+    if _authorized_collection(official) is None or not isinstance(official.get("records"), list):
+        return dict(refused, reason="official-collection-refused")
+    records = {}
+    for record in official["records"]:
+        if not isinstance(record, dict):
+            return dict(refused, reason="official-record-refused")
+        record = dict(record, collection=official["collection"])
+        key = str(record.get("order", {}).get("client_order_index", record.get("official_id")))
+        records[key] = record
+    known = {str(row.get("official_id")) for row in current_intents}
+    if any(key not in known for key in records):
+        return dict(refused, reason="official-id-not-in-intents")
+    proposed, restored = [], []
+    for cur, bak in zip(current_intents, backup_intents):
+        if not isinstance(cur, dict) or not isinstance(bak, dict) or not _same_id(cur, bak):
+            return dict(refused, reason="intent-identity-mismatch")
+        if cur.get("status") == "unknown" and not official_evidence(cur.get("terminal_evidence")):
+            record = records.get(str(cur.get("official_id")))
+            if record is None:
+                proposed.append(json.loads(json.dumps(cur)))
+                continue
+            one = audit_restore_intent(cur, bak, record)
+            if one is None:
+                return dict(refused, reason="official-record-mismatch", official_id=cur.get("official_id"))
+            proposed.append(one)
+            restored.append(str(cur.get("official_id")))
+        else:
+            proposed.append(json.loads(json.dumps(cur)))
+    if [str(row.get("official_id")) for row in proposed] != [str(row.get("official_id")) for row in current_intents]:
+        return dict(refused, reason="intent-set-changed")
+    marker = _marker_decision(current, proposed, window)
+    pos = None if marker["cleared"] else json.loads(json.dumps(current.get("pos")))
+    exit_pending = None if marker["cleared"] else json.loads(json.dumps(current.get("exit_pending")))
+    before = dict(intents=current_intents, pos=current.get("pos"), exit_pending=current.get("exit_pending"), mode=current.get("mode"))
+    after = dict(intents=proposed, pos=pos, exit_pending=exit_pending, mode=current.get("mode"))
+    import difflib
+    diff = "".join(difflib.unified_diff(
+        json.dumps(before, ensure_ascii=False, sort_keys=True, indent=2).splitlines(True),
+        json.dumps(after, ensure_ascii=False, sort_keys=True, indent=2).splitlines(True),
+        fromfile="current", tofile="proposal"))
+    return dict(ok=True, dry_run=True, applied_to_input=False, wrote_inputs=False, loadable_state=False,
+                cryptographic_proof=False, kind="anth-restore-proposal", mode=current.get("mode"),
+                proposed_intents=proposed, proposed_pos=pos, proposed_exit_pending=exit_pending,
+                restored_ids=restored, marker=marker, intent_count=len(proposed), diff=diff,
+                note="The source string is not a signature. This proposal trusts the supplied fixture only as the named authorized read-only collection.")
+
+def _marker_decision(current, intents, window):
+    reasons = []
+    pending = current.get("exit_pending") if isinstance(current.get("exit_pending"), dict) else None
+    pos = current.get("pos") if isinstance(current.get("pos"), dict) else None
+    if pending is None or pending.get("submitted") is not True or pending.get("why") != "开仓":
+        reasons.append("exit-marker-shape")
+    marker_t = finite_num(pending.get("t")) if pending else None
+    if marker_t is None:
+        reasons.append("exit-marker-time")
+    if pos is None or pos.get("opening_pending") is not True or pos.get("entryAccountingUnknown") is not True:
+        reasons.append("opening-marker-shape")
+    if pos is not None and pos.get("first_open_intent") not in (None, "", []):
+        reasons.append("marker-has-intent-pointer")
+    if any(row.get("status") == "unknown" for row in intents):
+        reasons.append("unknown-remains")
+    if marker_t is not None and any(finite_num(row.get("t")) is not None and finite_num(row.get("t")) >= marker_t for row in intents):
+        reasons.append("intent-at-or-after-marker")
+    if not isinstance(window, dict) or _authorized_collection(window) is None:
+        reasons.append("window-collection-missing")
+    else:
+        start, end = finite_num(window.get("start_ms")), finite_num(window.get("end_ms"))
+        positions = window.get("positions") if isinstance(window.get("positions"), dict) else {}
+        venues = window.get("venues") if isinstance(window.get("venues"), dict) else {}
+        if None in (start, end, marker_t) or not (start <= marker_t <= end):
+            reasons.append("window-does-not-cover-marker")
+        if finite_num(positions.get("io")) != 0 or finite_num(positions.get("lt")) != 0:
+            reasons.append("official-position-not-flat")
+        for venue in ("io", "lt"):
+            side = venues.get(venue) if isinstance(venues.get(venue), dict) else {}
+            if side.get("code") != 200 or side.get("orders") != 0 or side.get("fills") != 0:
+                reasons.append("window-" + venue + "-not-empty")
+    return dict(cleared=not reasons, reasons=reasons)
 
 async def read_exposure(venue=None, paced=False):
     """Unknown current exposure never reuses a stale (possibly zero) observation."""

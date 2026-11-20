@@ -19,7 +19,7 @@
 
 归档 `bot.py` 的对账不再用当前净持仓推翻已有更晚同所订单的历史终态，也不擦掉已有官方证据。没有更晚订单、且没有官方来源的最新本地 terminal，在官方查询为空时仍降为 unknown。已完整平仓、账户该侧为 0、并且有更早同数量 terminal 的平仓，查询窗口过期时保持 terminal。发单前因旧单退出不再写成已提交退出；没有新 intent 时撤掉本次本地开仓标记。仍有未知订单则停止新开仓，不重发、不平未知腿。
 
-`audit_restore_intent` 只在运维只读查询记录与备份 terminal 的 official id、venue 和 filled 一致时给出一条提案。手填数字会被拒绝。函数不写状态，没有路由，也不会在部署或重启时把现网两条 unknown 解锁。
+`audit_restore_intent` 只在授权只读采集的订单 `filled_base_amount` 与成交明细合计、备份 terminal 的 official id 和 venue 一致时给出一条提案。手填数字或单独的 source 字符串会被拒绝。函数不写状态。`restore_state_offline.py` 默认不写文件，不删 intent，也不把提案当成可加载的 state。
 
 亏损上限默认 5U，可保存 0 到 100000 之间的有限正数。净亏损从首次就绪的两所官方权益合计起算，含已实现、未实现、费用和资金费。能分类的充值、提现和内部划转按资金进出调整；分类不了就数据异常并停止新开仓，不改基线。重启和改金额不重置基线、不解除触发、不改变模式。触发先落盘再挡开仓。已有持仓仍可止损、回归和到时退出。显式确认才能重置基线。公开 DRY_RUN 模拟没有官方权益，不启用这道门；生产候选默认 DRY_RUN 关闭。
 
@@ -29,18 +29,19 @@
 
 无网络、无真实客户端。
 
-- 归档与生产候选：`test_execution_safety.py` 33 项 OK，`test_order_ack.py` 46 项 OK，`test_history_reconcile.py` 44 项 OK。
+- 归档与生产候选：`test_execution_safety.py` 33 项 OK，`test_order_ack.py` 46 项 OK，`test_history_reconcile.py` 48 项 OK。
 - `test_offline.py` / `simtest.py` 全部通过。
 - 历史 fixture：完整开平后空仓，重启和全量对账不把旧单改回 unknown/terminal_wait，也不清空证据。发单前门禁不制造 submitted 退出、不追加 intent。污染样本里 terminal_wait 且有官方证据的开仓回到 terminal 且数量不变；证据已空的 unknown 保持 unknown。伪造的最新 terminal 仍被降级。
 - 亏损：默认 5、非法金额拒绝、重启保留触发和基线、调低立即触发、调高不解锁也不改模式、费用和未实现计入合计、一所盈利一所亏损按合计、现金流调整、无法分类或时间错开则失败关闭、触发后减仓仍可发、两个开仓门都挡、确认重置不把模式改成 live。
 - 控制页脚本通过 `node --check`。没有在浏览器里点击控制台：归档 `main()` 拒绝启动，本环境也不启动生产进程。
 - 生产候选由 `8ac037…` 打补丁得到，`patch -p1` 后与候选字节一致。保留 `.env`、杠杆默认 3、名义默认 290。密钥扫描未发现硬编码私钥或访问码。
 
-44 项是历史对账测试文件的用例总数，其中包含继承的执行用例。这个总数不表示 5U、现金流、官方权益轮询、签名历史或现网两条 unknown 已经验收。
+48 项是历史对账测试文件的方法数，含继承用例。它不表示 5U 已在现网生效，也不表示真实账户的提现第二来源、explorer 日志或两条 unknown 已经验收。
 
-归档 `bot.py` SHA256 `3b4318c03eba74139f18f43ecdb06f56b605ddbe7851e09f52d4c9efe2c4537d`。
-生产候选 SHA256 `fbe0ed0d99eb38b7f4b98a0b0279e8e2103c9b8537bbd711aeffca12be30cfcb`。
-补丁 SHA256 `03c2a32428295a3aee095c9267ec07573bf09e1d93fc52074e8f6c349f12b831`。
+归档 `bot.py` SHA256 `f28d9ee12f51007594ae9b1969fcc28c0971e5e539712ed4ea886851d85f6141`。
+生产候选 SHA256 `98701f1ac0104dbe2167029650612b5519aebda305b7d4d33216179727752d12`。
+补丁 SHA256 `24ce74de5c6aec80d18a17b5c42d5cf24eb47c7afd5b8f19d6365a47e9fabc48`。
+上一版未部署候选 `fbe0ed0d99eb38b7f4b98a0b0279e8e2103c9b8537bbd711aeffca12be30cfcb` 不要再部署。
 候选控制页 SHA256 `4b4270385d54d9f2e644a6f499d9e6990c1cbe4160b86f4f4f24e39eef67c2b0`。
 
 ## 决策与原因
