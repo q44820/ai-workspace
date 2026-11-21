@@ -44,7 +44,7 @@ th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}
 <div class="grid g4">
   <div class="card"><div class="k">运行状态</div><div class="v" id="mode">—</div><div class="s" id="modeS">—</div></div>
   <div class="card"><div class="k">当前价差 / 2小时中位数</div><div class="v" id="spr">—</div><div class="s" id="dev">—</div><div class="bar" id="trigBar" hidden><i id="trigFill" style="width:0"></i></div></div>
-  <div class="card"><div class="k">当前持仓 · 浮动盈亏</div><div class="v" id="uPnL">—</div><div class="s" id="posS">无持仓</div></div>
+  <div class="card"><div class="k">当前持仓 · 浮动盈亏</div><div class="v" id="uPnL">—</div><div class="s" id="posS">等待核验仓位</div></div>
   <div class="card"><div class="k">累计实际盈亏（含两边手续费） / 胜率 / 笔数</div><div class="v" id="net">—</div><div class="s" id="totS">—</div></div>
 </div>
 
@@ -101,6 +101,7 @@ function draw(d){
     $("banner").style.background="#3d1214"; $("banner").style.border="1px solid #f85149";
     $("banner").textContent=d&&d.ok!==false?"⚠️ 数据已过期或时间无效，当前运行状态未知；请勿据旧快照判断停止或运行。最后快照："+(Number.isFinite(d.ts)?bj(d.ts):"未知"):"⚠️ 看板连接中断，当前运行状态未知："+(d&&d.err?d.err:"请稍后刷新");
     $("mode").textContent="状态未知";$("mode").className="v yel";$("modeS").textContent="无法确认当前服务状态，旧数据仅供历史参考";$("dIo").className="dot off";$("dLt").className="dot off";$("statusHistory").textContent="";$("alert").textContent="";
+    $("uPnL").textContent="仓位未核实";$("uPnL").className="v yel";$("posS").textContent="状态快照不可用，旧仓位不能作为当前仓位";
     return;
   }
   lastOk=Date.now();
@@ -150,7 +151,12 @@ function draw(d){
     $("uPnL").textContent=sg(p.uPnL,2)+"U"; $("uPnL").className="v "+cls(p.uPnL);
     $("posS").innerHTML=`${p.dirLabel||DIR[p.dir]||p.dir}（${p.live?"实盘":"模拟"}）已持 ${dur(p.heldMs)}<br>实际入场 ${sg(p.entrySpread??p.spread)}bp（信号 ${sg(p.sigSpread)}bp，实际偏离 ${sg(p.entryDev)}bp${p.weak?" ⚠️偏小，只在有利润时平":""}）→ 目标 ${sg(p.target)}bp ｜ 当前可成交出场 ${sg(p.exitSpr)}bp<br>数量 io ${p.qIo} / Lighter ${p.qLt} ｜ 实际成交价 io ${f2(p.pxIo)} / Lighter ${f2(p.pxLt)} ｜ 扣费后浮动 ${sg(p.bp)}bp<br>${p.holdNote?p.holdNote+"<br>":""}强平价 io ${f2(p.liqIo)}（距 ${p.liqDistIo==null?"—":p.liqDistIo.toFixed(1)}%）/ Lighter ${f2(p.liqLt)}（距 ${p.liqDistLt==null?"—":p.liqDistLt.toFixed(1)}%）`;
   }else{
-    $("uPnL").textContent="无持仓"; $("uPnL").className="v"; $("posS").textContent="空仓观望";
+    const a=d.actualExposure, age=a&&Date.now()-a.t;
+    const known=a&&Number.isFinite(a.io)&&Number.isFinite(a.lt)&&Number.isFinite(a.t)&&age>=0&&age<=90000;
+    const flat=known&&a.io===0&&a.lt===0;
+    $("uPnL").textContent=flat?"无持仓":known?"有敞口":"仓位未核实";
+    $("uPnL").className=flat?"v":"v yel";
+    $("posS").textContent=flat?"双边仓位已核实为零（不代表无挂单）":known?"官方仓位非零，交易记录待对账":"缺少最新双边官方仓位；不能按空仓处理";
   }
 
   const T=d.totals||{};
