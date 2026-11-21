@@ -115,6 +115,7 @@ class Inventory:
                 row.pop('web_url',None)
                 # Self-link stays relative so a new private access URL is never stale.
                 candidate='./' if row['id']=='program-dashboard' else safe_web_url(web_links.get(row['id']))
+                if row['id']=='arb-hub':candidate='./arb-hub/'
                 if candidate:row['web_url']=candidate
             self.cached = {'generated_at':utcnow(),'read_only':True,'local_sync':sync,'items':items,'scope':'仅展示GitHub代码库中的项目；Alpha与Booster分别显示状态，不列未上传的旧任务、代理和系统服务。','privacy':'不展示密钥、账户、资产、持仓、日志、原始命令或认证配置；仅展示经确认的网页跳转入口。','status_note':'运行中仅表示进程存在；定时启用不等于任务成功；停止不等于代码不存在。'}
             self.cached_at = time.monotonic()
@@ -138,6 +139,28 @@ class Handler(BaseHTTPRequestHandler):
         if not head:
             self.wfile.write(body)
 
+    def arb_hub_get(self, name, head=False):
+        # Fixed, read-only loopback destination. Never forward client paths, headers or query strings.
+        assets={'': 'text/html; charset=utf-8', 'app.js': 'application/javascript; charset=utf-8',
+                'style.css': 'text/css; charset=utf-8', 'api/state': 'application/json; charset=utf-8'}
+        if name not in assets:return self.response(b'{"error":"not_found"}',404,head=head)
+        import http.client
+        try:
+            conn=http.client.HTTPConnection('127.0.0.1',8898,timeout=12)
+            try:
+                conn.request('GET','/'+name,headers={'Accept-Encoding':'identity'})
+                resp=conn.getresponse()
+                if resp.status!=200:raise ValueError('upstream unavailable')
+                limit=32*1024*1024 if name=='api/state' else 1024*1024
+                body=resp.read(limit+1)
+                if len(body)>limit:raise ValueError('oversized')
+            finally:conn.close()
+        except (OSError,ValueError,http.client.HTTPException):
+            return self.response(b'{"error":"arb_hub_unavailable"}',502,head=head)
+        if not name:body=body.replace(b'href="/style.css',b'href="./style.css').replace(b'src="/app.js',b'src="./app.js')
+        if name=='app.js':body=body.replace(b"fetch('/api/state')",b"fetch('./api/state')")
+        return self.response(body,content_type=assets[name],head=head)
+
     def do_GET(self, head=False):
         path = self.path.split('?',1)[0]
         if path == '/health':
@@ -146,6 +169,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts)<4 or parts[1]!='v' or not hmac.compare_digest(hashlib.sha256(parts[2].encode()).hexdigest(), self.server.token_hash):
             return self.response(b'{"error":"not_found"}',404,head=head)
         suffix = '/'.join(parts[3:])
+        if suffix.startswith('arb-hub/'):
+            return self.arb_hub_get(suffix[len('arb-hub/'):], head)
         if suffix.startswith('anth-live/'):
             name=suffix[len('anth-live/'):]
             if name=='api/status':
