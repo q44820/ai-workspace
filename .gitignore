@@ -23,6 +23,7 @@ __pycache__/
 *.pyc
 .DS_Store
 runtime/
+private-pages/
 output/
 reports/
 *_state.json

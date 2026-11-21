@@ -116,6 +116,7 @@ class Inventory:
                 # Self-link stays relative so a new private access URL is never stale.
                 candidate='./' if row['id']=='program-dashboard' else safe_web_url(web_links.get(row['id']))
                 if row['id']=='arb-hub':candidate='./arb-hub/'
+                if row['id']=='lp-bncb-bnb':candidate='./bncb-lp/'
                 if candidate:row['web_url']=candidate
             self.cached = {'generated_at':utcnow(),'read_only':True,'local_sync':sync,'items':items,'scope':'仅展示GitHub代码库中的项目；Alpha与Booster分别显示状态，不列未上传的旧任务、代理和系统服务。','privacy':'不展示密钥、账户、资产、持仓、日志、原始命令或认证配置；仅展示经确认的网页跳转入口。','status_note':'运行中仅表示进程存在；定时启用不等于任务成功；停止不等于代码不存在。'}
             self.cached_at = time.monotonic()
@@ -169,6 +170,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts)<4 or parts[1]!='v' or not hmac.compare_digest(hashlib.sha256(parts[2].encode()).hexdigest(), self.server.token_hash):
             return self.response(b'{"error":"not_found"}',404,head=head)
         suffix = '/'.join(parts[3:])
+        if suffix=='bncb-lp/':
+            from bncb_view import serve
+            return serve(self,head)
         if suffix.startswith('arb-hub/'):
             return self.arb_hub_get(suffix[len('arb-hub/'):], head)
         if suffix.startswith('anth-live/'):
