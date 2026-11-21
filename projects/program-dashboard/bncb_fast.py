@@ -40,7 +40,8 @@ def page(h,x,warning=''):
 def serve(handler,head):
     h=json.loads((ROOT/'bncb-ledger.json').read_text());x=json.loads((ROOT/'bncb-snapshot.json').read_text());warn=ROOT/'bncb-warning';warning=warn.read_text() if warn.exists() else ''
     if time.time()-x['time']>55 and time.monotonic()>RETRY and LOCK.acquire(False):threading.Thread(target=refresh,daemon=True).start()
-    body=page(h,x,warning);handler.send_response(200)
-    for k,v in {'Content-Type':'text/html; charset=utf-8','Content-Length':str(len(body)),'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"}.items():handler.send_header(k,v)
+    from bncb_single import render
+    body,digest=render(h,x,warning,(ROOT/'bncb-lp.html').read_text());handler.send_response(200)
+    for k,v in {'Content-Type':'text/html; charset=utf-8','Content-Length':str(len(body)),'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':f"default-src 'none'; script-src 'sha256-{digest}'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"}.items():handler.send_header(k,v)
     handler.end_headers()
     if not head:handler.wfile.write(body)
