@@ -20,6 +20,11 @@ class InlineScripts(HTMLParser):
         if self.inside:self.hashes.append("'sha256-"+base64.b64encode(hashlib.sha256(data.encode()).digest()).decode()+"'")
 
 def serve(handler,head):
+    from urllib.parse import parse_qs, urlsplit
+    query=parse_qs(urlsplit(handler.path).query)
+    if 'detail' not in query and 'addr' not in query and (Path(__file__).resolve().parent/'private-pages'/'bncb-snapshot.json').is_file():
+        from bncb_fast import serve as quick
+        return quick(handler,head)
     try:body=(Path(__file__).resolve().parent/'private-pages'/'bncb-lp.html').read_bytes()
     except OSError:return handler.response(b'{"error":"lp_page_unavailable"}',503,head=head)
     scripts=InlineScripts();scripts.feed(body.decode('utf-8').replace('\r\n','\n').replace('\r','\n'));scripts.close()
