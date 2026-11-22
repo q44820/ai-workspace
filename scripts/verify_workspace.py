@@ -20,6 +20,8 @@ def main():
     run([sys.executable,'test_hub.py'],ROOT/'projects/arb-hub')
     run([sys.executable,'test_offline.py'],ROOT/'projects/anth-bot')
     run([sys.executable,'test_execution_safety.py'],ROOT/'projects/anth-bot')
+    run([sys.executable,'test_order_ack.py'],ROOT/'projects/anth-bot')
+    run([sys.executable,'test_history_reconcile.py'],ROOT/'projects/anth-bot')
     run([sys.executable,'-m','unittest','test_monitors','-v'],ROOT/'projects/binance-monitors')
     run([sys.executable,'-m','unittest','discover','-p','test_*.py','-v'],ROOT/'projects/basis-radar')
     run([sys.executable,'test_bncb_lp_monitor.py'],ROOT/'projects/lp-monitor/scripts')
